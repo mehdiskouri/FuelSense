@@ -91,7 +91,11 @@ class FacilityViewSet(viewsets.ModelViewSet):
 
 
 class DeliveryViewSet(viewsets.ModelViewSet):
-	queryset = Delivery.objects.select_related("vehicle", "depot").prefetch_related("items__facility__fuel_type").all()
+	queryset = (
+		Delivery.objects.select_related("vehicle", "depot")
+		.prefetch_related("items__facility__fuel_type")
+		.order_by("-planned_date", "-id")
+	)
 	permission_classes = [IsAuthenticated]
 	filterset_fields = ["status", "vehicle", "depot"]
 
