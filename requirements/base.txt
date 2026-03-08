@@ -1,0 +1,14 @@
+Django==5.2.12
+djangorestframework==3.16.1
+celery[redis]==5.6.2
+django-celery-beat==2.9.0
+httpx==0.28.1
+psycopg2-binary==2.9.11
+redis==6.4.0
+gunicorn==25.1.0
+prometheus-client==0.24.1
+django-prometheus==2.4.1
+factory-boy==3.3.3
+matplotlib==3.10.8
+plotly==6.6.0
+django-filter==25.2

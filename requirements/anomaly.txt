@@ -1,0 +1,7 @@
+scikit-learn==1.8.0
+fastapi==0.135.1
+uvicorn[standard]==0.41.0
+joblib==1.5.3
+pydantic==2.12.5
+numpy==2.4.2
+prometheus-client==0.24.1
