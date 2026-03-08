@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from fuelsense.core.tests.factories import DeliveryFactory, FacilityFactory, ModelRegistryFactory
 
 
 @pytest.mark.django_db
-def test_admin_list_pages_render(admin_client):
+def test_admin_list_pages_render(admin_client: Any) -> None:
     urls = [
         "/admin/core/facility/",
         "/admin/core/delivery/",
@@ -19,7 +21,7 @@ def test_admin_list_pages_render(admin_client):
 
 
 @pytest.mark.django_db
-def test_admin_custom_pages_render(admin_client):
+def test_admin_custom_pages_render(admin_client: Any) -> None:
     facility = FacilityFactory()
     delivery = DeliveryFactory()
     ModelRegistryFactory()

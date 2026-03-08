@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
-
 import pytest
 from django.db import IntegrityError
 from django.utils import timezone

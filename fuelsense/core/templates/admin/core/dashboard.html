@@ -3,6 +3,12 @@
 {% block content %}
 <h1>FuelSense Operations Dashboard</h1>
 
+<style>
+  .drift-high { background-color: #f8d7da; }
+  .drift-medium { background-color: #fff3cd; }
+  .drift-low { background-color: #d1e7dd; }
+</style>
+
 <div style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px;margin-bottom:16px;">
   <div><strong>Avg Delivery Cost</strong><br>{{ kpis.avg_delivery_cost|floatformat:2 }}</div>
   <div><strong>Forecast RMSE</strong><br>{{ kpis.forecast_accuracy|floatformat:2 }}</div>
@@ -48,8 +54,7 @@
       <td>{{ m.facility.name|default:"Global" }}</td>
       <td>{{ m.model_type }}</td>
       <td>{{ m.version }}</td>
-      <td
-        style="background-color:{% if m.drift_ratio > 1.5 %}#f8d7da{% elif m.drift_ratio > 1.0 %}#fff3cd{% else %}#d1e7dd{% endif %};">
+      <td class="{% if m.drift_ratio > 1.5 %}drift-high{% elif m.drift_ratio > 1.0 %}drift-medium{% else %}drift-low{% endif %}">
         {{ m.drift_ratio|floatformat:2 }}
       </td>
     </tr>

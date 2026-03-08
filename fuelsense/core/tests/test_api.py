@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import pytest
-from django.urls import reverse
+# pyright: reportMissingTypeStubs=false
 
-from fuelsense.core.models import AnomalyAlert, Delivery, ModelRegistry
+from typing import Any, cast
+
+import pytest
+from django.test import Client
+
+from fuelsense.core.models import Delivery, ModelRegistry
 from fuelsense.core.tests.factories import (
     AnomalyAlertFactory,
     DeliveryFactory,
@@ -15,7 +19,7 @@ from fuelsense.core.tests.factories import (
 
 
 @pytest.mark.django_db
-def test_facility_list_and_detail(api_client):
+def test_facility_list_and_detail(api_client: Any) -> None:
     facility = FacilityFactory()
     res = api_client.get("/api/v1/facilities/")
     assert res.status_code == 200
@@ -27,7 +31,7 @@ def test_facility_list_and_detail(api_client):
 
 
 @pytest.mark.django_db
-def test_facility_inventory_forecasts_alerts_and_ack(api_client):
+def test_facility_inventory_forecasts_alerts_and_ack(api_client: Any) -> None:
     facility = FacilityFactory()
     ForecastFactory(facility=facility)
     alert = AnomalyAlertFactory(facility=facility)
@@ -52,7 +56,7 @@ def test_facility_inventory_forecasts_alerts_and_ack(api_client):
 
 
 @pytest.mark.django_db
-def test_delivery_endpoints_and_transition(api_client):
+def test_delivery_endpoints_and_transition(api_client: Any) -> None:
     delivery = DeliveryFactory(status=Delivery.Status.PLANNED)
     lst = api_client.get("/api/v1/deliveries/")
     assert lst.status_code == 200
@@ -69,13 +73,14 @@ def test_delivery_endpoints_and_transition(api_client):
 
 
 @pytest.mark.django_db
-def test_planning_model_dashboard_endpoints(api_client, monkeypatch):
+def test_planning_model_dashboard_endpoints(api_client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     ModelRegistryFactory()
     PlanningCycleFactory()
 
-    called = {"tasks": []}
+    called: dict[str, list[str]] = {"tasks": []}
 
-    def fake_send_task(name, args=None, kwargs=None):
+    def fake_send_task(name: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> None:
+        _ = args, kwargs
         called["tasks"].append(name)
 
     monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
@@ -88,10 +93,12 @@ def test_planning_model_dashboard_endpoints(api_client, monkeypatch):
     assert hist.status_code == 200
 
     model = ModelRegistry.objects.first()
-    promote = api_client.post(f"/api/v1/models/{model.id}/promote/")
+    assert model is not None
+    model_pk = cast(int, model.pk)
+    promote = api_client.post(f"/api/v1/models/{model_pk}/promote/")
     assert promote.status_code == 200
 
-    retrain = api_client.post(f"/api/v1/models/{model.id}/retrain/")
+    retrain = api_client.post(f"/api/v1/models/{model_pk}/retrain/")
     assert retrain.status_code == 202
 
     kpis = api_client.get("/api/v1/dashboard/kpis/")
@@ -102,9 +109,7 @@ def test_planning_model_dashboard_endpoints(api_client, monkeypatch):
 
 
 @pytest.mark.django_db
-def test_auth_required():
-    from rest_framework.test import APIClient
-
-    client = APIClient()
+def test_auth_required() -> None:
+    client = Client()
     res = client.get("/api/v1/facilities/")
     assert res.status_code in {401, 403}

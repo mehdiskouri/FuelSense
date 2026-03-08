@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import importlib
+from typing import Any, cast
+
 import pytest
 from django.test import Client
 
 from fuelsense.core import metrics
+from fuelsense.core.models import Facility
 from fuelsense.core.cache import get_or_set_dashboard_kpis, get_or_set_facility_inventory, get_or_set_reorder_status
 from fuelsense.core.tests.factories import (
     DeliveryItemFactory,
@@ -15,14 +19,15 @@ from fuelsense.core.tests.factories import (
 
 
 @pytest.mark.django_db
-def test_cache_helpers_and_metrics_refresh(sample_facilities):
-    f = sample_facilities[0]
+def test_cache_helpers_and_metrics_refresh(sample_facilities: list[Any]) -> None:
+    f = cast(Facility, sample_facilities[0])
+    facility_id = cast(int, f.pk)
     InventoryLogFactory(facility=f)
     ForecastFactory(facility=f)
     DeliveryFactory()
-    val = get_or_set_facility_inventory(f.id)
+    val = get_or_set_facility_inventory(facility_id)
     assert isinstance(val, float)
-    status = get_or_set_reorder_status(f.id)
+    status = get_or_set_reorder_status(facility_id)
     assert status in {"OK", "WARNING", "CRITICAL"}
     payload = get_or_set_dashboard_kpis()
     assert "avg_delivery_cost_last_30d" in payload
@@ -30,7 +35,7 @@ def test_cache_helpers_and_metrics_refresh(sample_facilities):
 
 
 @pytest.mark.django_db
-def test_admin_actions_and_change_views(admin_client):
+def test_admin_actions_and_change_views(admin_client: Any) -> None:
     facility = ModelRegistryFactory().facility
     InventoryLogFactory(facility=facility)
     ForecastFactory(facility=facility)
@@ -43,7 +48,7 @@ def test_admin_actions_and_change_views(admin_client):
     assert del_resp.status_code == 200
 
 @pytest.mark.django_db
-def test_model_registry_admin_actions(admin_client, monkeypatch):
+def test_model_registry_admin_actions(admin_client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     m1 = ModelRegistryFactory(version=1)
     m2 = ModelRegistryFactory(facility=m1.facility, model_type=m1.model_type, version=2)
     facility = m1.facility
@@ -68,7 +73,10 @@ def test_model_registry_admin_actions(admin_client, monkeypatch):
     )
     assert rollback_resp.status_code == 200
 
-    monkeypatch.setattr("celery.current_app.send_task", lambda *args, **kwargs: None, raising=False)
+    def _noop_send_task(*args: Any, **kwargs: Any) -> None:
+        _ = args, kwargs
+
+    monkeypatch.setattr("celery.current_app.send_task", _noop_send_task, raising=False)
 
     emergency_resp = admin_client.post(
         "/admin/core/facility/",
@@ -82,15 +90,15 @@ def test_model_registry_admin_actions(admin_client, monkeypatch):
 
 
 @pytest.mark.django_db
-def test_health_and_ready_endpoints():
+def test_health_and_ready_endpoints() -> None:
     client = Client()
     assert client.get("/healthz").status_code == 200
     assert client.get("/readyz").status_code == 200
 
 
-def test_import_infra_modules():
-    import fuelsense.asgi  # noqa: F401
-    import fuelsense.celery  # noqa: F401
-    import fuelsense.settings.production  # noqa: F401
-    import fuelsense.wsgi  # noqa: F401
-    import fuelsense.urls  # noqa: F401
+def test_import_infra_modules() -> None:
+    assert importlib.import_module("fuelsense.asgi") is not None
+    assert importlib.import_module("fuelsense.celery") is not None
+    assert importlib.import_module("fuelsense.settings.production") is not None
+    assert importlib.import_module("fuelsense.wsgi") is not None
+    assert importlib.import_module("fuelsense.urls") is not None
