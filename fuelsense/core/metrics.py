@@ -1,0 +1,40 @@
+"""Prometheus business metrics for FuelSense."""
+
+from __future__ import annotations
+
+from prometheus_client import Counter, Gauge, Histogram
+
+active_anomaly_alerts = Gauge("active_anomaly_alerts", "Unacknowledged anomaly alerts")
+facilities_below_reorder = Gauge("facilities_below_reorder", "Facilities below dynamic reorder point")
+forecast_mape_pct = Gauge("forecast_mape_pct", "Forecast RMSE proxy percentage")
+
+celery_task_duration_seconds = Histogram(
+    "celery_task_duration_seconds",
+    "Celery task duration",
+    labelnames=("task_name", "queue"),
+)
+celery_task_failures_total = Counter(
+    "celery_task_failures_total",
+    "Celery task failures",
+    labelnames=("task_name", "queue"),
+)
+celery_task_success_total = Counter(
+    "celery_task_success_total",
+    "Celery task successes",
+    labelnames=("task_name", "queue"),
+)
+retraining_triggered_total = Counter(
+    "retraining_triggered_total",
+    "Model retraining triggers",
+    labelnames=("facility_id", "model_type"),
+)
+
+
+def refresh_business_gauges() -> None:
+    from django.db.models import Avg, F
+
+    from fuelsense.core.models import AnomalyAlert, Facility, Forecast
+
+    active_anomaly_alerts.set(AnomalyAlert.objects.filter(is_acknowledged=False).count())
+    facilities_below_reorder.set(Facility.objects.filter(current_inventory__lte=F("dynamic_reorder_point")).count())
+    forecast_mape_pct.set(float(Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse"))["v"] or 0.0))
