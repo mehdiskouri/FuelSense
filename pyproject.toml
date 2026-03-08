@@ -1,0 +1,57 @@
+[project]
+name = "fuelsense"
+version = "0.1.0"
+description = "FuelSense energy logistics optimization and MLOps platform"
+requires-python = ">=3.13"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+exclude = [".git", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "N"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fuelsense", "fuelsense_common", "forecaster", "anomaly", "optimizer", "ml_pipeline"]
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["mypy_django_plugin.main"]
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+exclude = ["(^|/)tests/"]
+
+[[tool.mypy.overrides]]
+module = ["forecaster.*", "anomaly.*", "optimizer.*", "ml_pipeline.*"]
+strict = false
+disallow_untyped_defs = false
+
+[tool.django-stubs]
+django_settings_module = "fuelsense.settings.development"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "fuelsense.settings.development"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--strict-markers --tb=short -q"
+markers = [
+  "slow: marks tests as slow",
+  "gpu: marks tests requiring GPU",
+  "integration: marks integration tests",
+]
+
+[tool.coverage.run]
+source = ["fuelsense", "fuelsense_common", "forecaster", "anomaly", "optimizer", "ml_pipeline"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+]

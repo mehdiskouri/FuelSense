@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: fuelsense
+      POSTGRES_USER: fuelsense
+      POSTGRES_PASSWORD: fuelsense
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    env_file: .env.example
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+
+  celery-default:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    command: celery -A fuelsense worker -Q default --loglevel=info
+    env_file: .env.example
+    depends_on:
+      - django
+      - redis
+
+  celery-training:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    command: celery -A fuelsense worker -Q training --loglevel=info
+    env_file: .env.example
+    depends_on:
+      - django
+      - redis
+
+  celery-planning:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    command: celery -A fuelsense worker -Q planning --loglevel=info
+    env_file: .env.example
+    depends_on:
+      - django
+      - redis
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    command: celery -A fuelsense beat --loglevel=info
+    env_file: .env.example
+    depends_on:
+      - django
+      - redis
+
+  forecaster:
+    build:
+      context: .
+      dockerfile: Dockerfile.forecaster
+    ports:
+      - "8001:8001"
+
+  anomaly:
+    build:
+      context: .
+      dockerfile: Dockerfile.anomaly
+    ports:
+      - "8002:8002"
+
+  optimizer:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimizer
+    ports:
+      - "8003:8003"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    command: mlflow server --host 0.0.0.0 --port 5000
+    ports:
+      - "5000:5000"
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"

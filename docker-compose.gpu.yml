@@ -1,0 +1,24 @@
+services:
+  forecaster:
+    build:
+      context: .
+      dockerfile: Dockerfile.forecaster-gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  optimizer:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimizer-gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

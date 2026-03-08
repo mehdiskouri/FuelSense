@@ -1,0 +1,5 @@
+gpu:
+  enabled: true
+image:
+  repository: ghcr.io/example/fuelsense-django
+  tag: latest-gpu

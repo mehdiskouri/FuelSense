@@ -1,0 +1,25 @@
+name: GPU Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gpu-backends:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install GPU service dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/forecaster-gpu.txt -r requirements/optimizer-gpu.txt -r requirements/dev.txt
+      - name: Validate GPU compose manifest
+        run: docker compose -f docker-compose.yml -f docker-compose.gpu.yml config > /tmp/compose-gpu.out
+      - name: Build GPU images
+        run: |
+          docker build -f Dockerfile.forecaster-gpu -t fuelsense/forecaster-gpu:${{ github.sha }} .
+          docker build -f Dockerfile.optimizer-gpu -t fuelsense/optimizer-gpu:${{ github.sha }} .
+      - name: Run GPU placeholder tests
+        run: echo "GPU tests activate when backend implementations land"

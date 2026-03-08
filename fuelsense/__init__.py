@@ -1,0 +1,1 @@
+"""FuelSense Django project package."""
