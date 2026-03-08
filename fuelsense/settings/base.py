@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from celery.schedules import crontab
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-dev-secret-key")
@@ -20,6 +22,8 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework.authtoken",
+    "django_filters",
     "django_celery_beat",
     "fuelsense.core",
     "fuelsense.synthetic",
@@ -84,8 +88,68 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.TokenAuthentication",
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "PAGE_SIZE": 50,
 }
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    }
+}
+
+CELERY_BEAT_SCHEDULE = {
+    "daily-tick": {
+        "task": "fuelsense.core.tasks.daily_tick",
+        "schedule": crontab(minute=0, hour=2),
+    },
+    "ingest-hourly": {
+        "task": "fuelsense.core.tasks.ingest_hourly",
+        "schedule": crontab(minute=0),
+    },
+    "batch-forecasts": {
+        "task": "fuelsense.core.tasks.run_batch_forecasts",
+        "schedule": crontab(minute=0, hour=2),
+    },
+    "batch-anomaly-detection": {
+        "task": "fuelsense.core.tasks.run_batch_anomaly_detection",
+        "schedule": crontab(minute=0, hour=3),
+    },
+    "drift-check": {
+        "task": "fuelsense.core.tasks.check_all_drift",
+        "schedule": crontab(minute=0, hour=4),
+    },
+    "planning-cycle": {
+        "task": "fuelsense.core.tasks.run_planning_cycle",
+        "schedule": crontab(minute=0, hour=5),
+    },
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "structured": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "structured",
+        }
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "celery": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "fuelsense": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
