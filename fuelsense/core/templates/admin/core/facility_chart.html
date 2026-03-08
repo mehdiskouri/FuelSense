@@ -1,0 +1,13 @@
+{% if facility_chart_b64 %}
+<h2>Last 30 Days: Consumption and Inventory</h2>
+<img src="data:image/png;base64,{{ facility_chart_b64 }}" alt="Facility chart" style="max-width:100%;height:auto;" />
+{% endif %}
+
+{% if recent_alerts %}
+<h3>Recent Alerts</h3>
+<ul>
+  {% for alert in recent_alerts %}
+  <li>{{ alert.timestamp }} - {{ alert.anomaly_type }} - {{ alert.score|floatformat:2 }}</li>
+  {% endfor %}
+</ul>
+{% endif %}

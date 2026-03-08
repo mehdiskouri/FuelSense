@@ -1,0 +1,12 @@
+{% if route_map_b64 %}
+<h2>Route Map</h2>
+<img src="data:image/png;base64,{{ route_map_b64 }}" alt="Route map" style="max-width:100%;height:auto;" />
+{% endif %}
+
+{% if cost_breakdown %}
+<h3>Cost Breakdown</h3>
+<ul>
+  <li>Total Cost: {{ cost_breakdown.total_cost|floatformat:2 }}</li>
+  <li>Solver Time (ms): {{ cost_breakdown.solver_time_ms|floatformat:2 }}</li>
+</ul>
+{% endif %}

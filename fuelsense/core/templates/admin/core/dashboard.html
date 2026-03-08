@@ -1,0 +1,61 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<h1>FuelSense Operations Dashboard</h1>
+
+<div style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px;margin-bottom:16px;">
+  <div><strong>Avg Delivery Cost</strong><br>{{ kpis.avg_delivery_cost|floatformat:2 }}</div>
+  <div><strong>Forecast RMSE</strong><br>{{ kpis.forecast_accuracy|floatformat:2 }}</div>
+  <div><strong>Anomaly Detection Rate</strong><br>{{ kpis.anomaly_detection_rate|floatformat:2 }}%</div>
+  <div><strong>Route Cost Reduction</strong><br>{{ kpis.route_cost_reduction|floatformat:2 }}%</div>
+</div>
+
+<h2>Facilities Below Reorder ({{ kpis.below_reorder_count }})</h2>
+<ul>
+  {% for f in below_reorder %}
+  <li>{{ f.name }} - {{ f.current_inventory|floatformat:2 }} / {{ f.dynamic_reorder_point|floatformat:2 }}</li>
+  {% empty %}
+  <li>No facilities below reorder point.</li>
+  {% endfor %}
+</ul>
+
+<h2>In-Transit Deliveries ({{ kpis.in_transit_count }})</h2>
+<ul>
+  {% for d in in_transit %}
+  <li>#{{ d.id }} - {{ d.depot.name }} - {{ d.vehicle.registration }}</li>
+  {% empty %}
+  <li>No in-transit deliveries.</li>
+  {% endfor %}
+</ul>
+
+<h2>Today's Alerts ({{ kpis.today_alert_count }})</h2>
+<ul>
+  {% for a in today_alerts %}
+  <li>{{ a.timestamp }} - {{ a.facility.name }} - {{ a.anomaly_type }} ({{ a.score|floatformat:2 }})</li>
+  {% empty %}
+  <li>No alerts today.</li>
+  {% endfor %}
+</ul>
+
+<h2>Model Drift Heatmap</h2>
+<table>
+  <thead>
+    <tr><th>Facility</th><th>Model Type</th><th>Version</th><th>Drift Ratio</th></tr>
+  </thead>
+  <tbody>
+  {% for m in drift %}
+    <tr>
+      <td>{{ m.facility.name|default:"Global" }}</td>
+      <td>{{ m.model_type }}</td>
+      <td>{{ m.version }}</td>
+      <td
+        style="background-color:{% if m.drift_ratio > 1.5 %}#f8d7da{% elif m.drift_ratio > 1.0 %}#fff3cd{% else %}#d1e7dd{% endif %};">
+        {{ m.drift_ratio|floatformat:2 }}
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="4">No model records.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
