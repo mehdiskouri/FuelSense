@@ -16,4 +16,7 @@ app.conf.task_queues = (
     Queue("training"),
     Queue("planning"),
 )
-app.autodiscover_tasks()
+app.autodiscover_tasks(["fuelsense.core"])
+
+# Ensure core task module is imported so shared_task decorators register immediately.
+import fuelsense.core.tasks  # noqa: E402,F401
