@@ -216,9 +216,7 @@ def active_facility_ids() -> list[int]:
 def build_anomaly_features(facility_id: int) -> dict[str, float] | None:
     now = timezone.now()
     logs_qs = InventoryLog.objects.filter(facility_id=facility_id).order_by("-timestamp")
-    recent_logs = list(
-        logs_qs[:7].values("timestamp", "consumption", "temperature", "inventory_level")
-    )
+    recent_logs = list(logs_qs[:7].values("timestamp", "consumption", "temperature", "inventory_level"))
     if len(recent_logs) < 2:
         return None
 
@@ -228,10 +226,7 @@ def build_anomaly_features(facility_id: int) -> dict[str, float] | None:
     prev_consumption = _safe_float(prev_log.get("consumption"), default=0.0)
 
     latest_forecast = (
-        Forecast.objects.filter(facility_id=facility_id)
-        .order_by("-created_at")
-        .only("predictions_json")
-        .first()
+        Forecast.objects.filter(facility_id=facility_id).order_by("-created_at").only("predictions_json").first()
     )
     if latest_forecast is None:
         return None
@@ -276,11 +271,7 @@ def build_anomaly_features(facility_id: int) -> dict[str, float] | None:
         else:
             hours_since_delivery = max((now - arrival).total_seconds() / 3600.0, 0.0)
 
-    facility_row = (
-        Facility.objects.filter(id=facility_id)
-        .values("storage_capacity", "current_inventory")
-        .first()
-    )
+    facility_row = Facility.objects.filter(id=facility_id).values("storage_capacity", "current_inventory").first()
     if facility_row is None:
         return None
     inventory_level_pct = _safe_float(facility_row.get("current_inventory")) / max(

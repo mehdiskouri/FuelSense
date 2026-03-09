@@ -92,7 +92,9 @@ def get_or_set_dashboard_kpis() -> DashboardKpis:
         ),
         "anomaly_detection_rate": float(AnomalyAlert.objects.count() / max(InventoryLog.objects.count(), 1)),
         "unacknowledged_anomalies_count": int(AnomalyAlert.objects.filter(is_acknowledged=False).count()),
-        "facilities_below_reorder": int(Facility.objects.filter(current_inventory__lte=F("dynamic_reorder_point")).count()),
+        "facilities_below_reorder": int(
+            Facility.objects.filter(current_inventory__lte=F("dynamic_reorder_point")).count()
+        ),
         "deliveries_in_transit": int(Delivery.objects.filter(status=Delivery.Status.IN_TRANSIT).count()),
     }
     cache.set(key, payload, timeout=300)

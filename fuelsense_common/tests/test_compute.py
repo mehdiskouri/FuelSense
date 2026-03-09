@@ -35,7 +35,9 @@ def test_resolve_device_explicit_cuda_available(monkeypatch: pytest.MonkeyPatch)
     assert resolve_device() == DeviceType.CUDA
 
 
-def test_resolve_device_explicit_cuda_fallback(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_resolve_device_explicit_cuda_fallback(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     def _import_torch(_name: str) -> _TorchCudaUnavailable:
         return _TorchCudaUnavailable()
 

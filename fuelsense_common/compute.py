@@ -24,11 +24,9 @@ class DeviceType(Enum):
 class ComputeBackend(Protocol):
     device: DeviceType
 
-    def warmup(self) -> None:
-        ...
+    def warmup(self) -> None: ...
 
-    def health_check(self) -> dict[str, object]:
-        ...
+    def health_check(self) -> dict[str, object]: ...
 
 
 def resolve_device() -> DeviceType:

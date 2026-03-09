@@ -13,7 +13,9 @@ from fuelsense_common.registry import get_backend
 import optimizer.backends  # noqa: F401
 
 
-def _synthetic_problem(stops: int, seed: int = 42) -> tuple[list[dict[str, float]], list[dict[str, float | int]], list[list[float]]]:
+def _synthetic_problem(
+    stops: int, seed: int = 42
+) -> tuple[list[dict[str, float]], list[dict[str, float | int]], list[list[float]]]:
     rng = np.random.default_rng(seed)
     coords = rng.uniform(0.0, 100.0, size=(stops + 1, 2)).astype(np.float32)
     matrix = np.zeros((stops + 1, stops + 1), dtype=np.float32)

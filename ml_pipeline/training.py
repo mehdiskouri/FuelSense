@@ -89,7 +89,9 @@ class ForecastTrainer:
             test_rmse = float(np.sqrt(max(mse, 0.0)))
             denom = np.clip(np.abs(y_true), a_min=1e-6, a_max=None)
             test_mape = float(
-                np.asarray(np.mean(np.abs((p50 - y_true) / denom)) * 100 if y_true.size else 0.0, dtype=np.float64).item()
+                np.asarray(
+                    np.mean(np.abs((p50 - y_true) / denom)) * 100 if y_true.size else 0.0, dtype=np.float64
+                ).item()
             )
 
         with mlflow.start_run(run_name=run_name) as run:
@@ -159,7 +161,9 @@ class ForecastTrainer:
         return {
             "facility_id": facility_id,
             "run_id": run_id,
-            "registered_model_name": f"demand-forecaster-{facility_id}" if facility_id is not None else "demand-forecaster-global",
+            "registered_model_name": f"demand-forecaster-{facility_id}"
+            if facility_id is not None
+            else "demand-forecaster-global",
             "device": device.value,
             "test_rmse": test_rmse,
             "test_mape": test_mape,

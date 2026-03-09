@@ -23,7 +23,7 @@ class CausalConv1d(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         out = self.conv(x)
         if self.padding > 0:
-            out = out[:, :, :-self.padding]
+            out = out[:, :, : -self.padding]
         return out
 
 

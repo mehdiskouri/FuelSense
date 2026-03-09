@@ -47,6 +47,7 @@ def test_admin_actions_and_change_views(admin_client: Any) -> None:
     del_resp = admin_client.get(f"/admin/core/delivery/{d.id}/change/")
     assert del_resp.status_code == 200
 
+
 @pytest.mark.django_db
 def test_model_registry_admin_actions(admin_client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     m1 = ModelRegistryFactory(version=1)

@@ -65,7 +65,9 @@ class CUDAForecaster(ComputeBackend):
         if self.model is None:
             return
         with torch.no_grad(), _cuda_autocast():
-            dummy = torch.zeros((1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device)
+            dummy = torch.zeros(
+                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device
+            )
             _ = self.model(dummy)
         torch.cuda.synchronize(self.cuda_device)
 

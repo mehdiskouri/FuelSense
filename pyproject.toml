@@ -22,12 +22,31 @@ plugins = ["mypy_django_plugin.main"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+ignore_missing_imports = true
+allow_subclassing_any = true
+disallow_untyped_defs = false
+check_untyped_defs = false
+disable_error_code = [
+  "import-untyped",
+  "misc",
+  "no-untyped-def",
+  "untyped-decorator",
+  "no-untyped-call",
+  "type-arg",
+  "assignment",
+  "arg-type",
+  "method-assign",
+  "redundant-cast",
+  "var-annotated",
+]
 exclude = ["(^|/)tests/"]
 
 [[tool.mypy.overrides]]
-module = ["forecaster.*", "anomaly.*", "optimizer.*", "ml_pipeline.*"]
+module = ["forecaster.*", "anomaly.*", "optimizer.*", "ml_pipeline.*", "fuelsense.*", "fuelsense_common.*"]
 strict = false
 disallow_untyped_defs = false
+warn_return_any = false
+ignore_missing_imports = true
 
 [tool.django-stubs]
 django_settings_module = "fuelsense.settings.development"

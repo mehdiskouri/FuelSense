@@ -4,7 +4,13 @@ from django.urls import include, path
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
 
-from fuelsense.core.views import DashboardViewSet, DeliveryViewSet, FacilityViewSet, ModelRegistryViewSet, PlanningViewSet
+from fuelsense.core.views import (
+    DashboardViewSet,
+    DeliveryViewSet,
+    FacilityViewSet,
+    ModelRegistryViewSet,
+    PlanningViewSet,
+)
 
 router = DefaultRouter()
 router.register(r"facilities", FacilityViewSet, basename="facility")

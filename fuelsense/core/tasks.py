@@ -15,7 +15,12 @@ from celery import chord, shared_task
 from django.db.models import F, Max
 from django.utils import timezone
 
-from fuelsense.core.features import build_anomaly_features, build_drift_data, build_lookback_matrix, extract_training_data
+from fuelsense.core.features import (
+    build_anomaly_features,
+    build_drift_data,
+    build_lookback_matrix,
+    extract_training_data,
+)
 from fuelsense.core.models import (
     AnomalyAlert,
     Delivery,
@@ -273,17 +278,16 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
             continue
 
         latest_log = (
-            InventoryLog.objects.filter(facility_id=facility_id)
-            .order_by("-timestamp")
-            .values("consumption")
-            .first()
+            InventoryLog.objects.filter(facility_id=facility_id).order_by("-timestamp").values("consumption").first()
         )
         recent_logs = list(
             InventoryLog.objects.filter(facility_id=facility_id)
             .order_by("-timestamp")
             .values_list("consumption", flat=True)[:7]
         )
-        latest_forecast = Forecast.objects.filter(facility_id=facility_id).order_by("-created_at").only("predictions_json").first()
+        latest_forecast = (
+            Forecast.objects.filter(facility_id=facility_id).order_by("-created_at").only("predictions_json").first()
+        )
         if latest_log is None or latest_forecast is None:
             continue
 
@@ -399,13 +403,19 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
         .order_by("-version")
         .first()
     )
-    previous_rmse = float(current_active.validation_rmse) if current_active and current_active.validation_rmse else float("inf")
+    previous_rmse = (
+        float(current_active.validation_rmse) if current_active and current_active.validation_rmse else float("inf")
+    )
     improved = float(result["test_rmse"]) < previous_rmse
 
     if improved:
-        ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id, is_active=True).update(is_active=False)
+        ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id, is_active=True).update(
+            is_active=False
+        )
         max_version = (
-            ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id).aggregate(v=Max("version")).get("v")
+            ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id)
+            .aggregate(v=Max("version"))
+            .get("v")
             or 0
         )
         ModelRegistry.objects.create(
@@ -509,17 +519,23 @@ def run_planning_cycle() -> dict[str, Any]:
 
     logger.info(
         "run_planning_cycle completed",
-        extra={"queued": len(queued_facilities), "planning_cycles": planning_cycles, "deliveries_created": deliveries_created},
+        extra={
+            "queued": len(queued_facilities),
+            "planning_cycles": planning_cycles,
+            "deliveries_created": deliveries_created,
+        },
     )
-    return {"queued": len(queued_facilities), "planning_cycles": planning_cycles, "deliveries_created": deliveries_created}
+    return {
+        "queued": len(queued_facilities),
+        "planning_cycles": planning_cycles,
+        "deliveries_created": deliveries_created,
+    }
 
 
 @shared_task(queue="planning")
 def trigger_emergency_delivery(facility_id: int) -> dict[str, Any]:
     assignment = (
-        DepotFacilityAssignment.objects.filter(facility_id=facility_id)
-        .select_related("depot", "facility")
-        .first()
+        DepotFacilityAssignment.objects.filter(facility_id=facility_id).select_related("depot", "facility").first()
     )
     if assignment is None:
         return {"facility_id": facility_id, "exists": False}

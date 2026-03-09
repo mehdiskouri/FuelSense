@@ -6,8 +6,19 @@ import numpy as np
 import pytest
 from django.utils import timezone
 
-from fuelsense.core.features import build_anomaly_features, build_drift_data, build_lookback_matrix, extract_training_data
-from fuelsense.core.tests.factories import DeliveryFactory, DeliveryItemFactory, ForecastFactory, InventoryLogFactory, ModelRegistryFactory
+from fuelsense.core.features import (
+    build_anomaly_features,
+    build_drift_data,
+    build_lookback_matrix,
+    extract_training_data,
+)
+from fuelsense.core.tests.factories import (
+    DeliveryFactory,
+    DeliveryItemFactory,
+    ForecastFactory,
+    InventoryLogFactory,
+    ModelRegistryFactory,
+)
 
 
 @pytest.mark.django_db

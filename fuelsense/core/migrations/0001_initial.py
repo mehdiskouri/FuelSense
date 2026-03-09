@@ -6,7 +6,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
     dependencies = [
@@ -15,196 +14,273 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='Depot',
+            name="Depot",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=200)),
-                ('latitude', models.FloatField()),
-                ('longitude', models.FloatField()),
-                ('fuel_inventory', models.FloatField()),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=200)),
+                ("latitude", models.FloatField()),
+                ("longitude", models.FloatField()),
+                ("fuel_inventory", models.FloatField()),
             ],
         ),
         migrations.CreateModel(
-            name='Facility',
+            name="Facility",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=200)),
-                ('facility_type', models.CharField(choices=[('POWER_PLANT', 'Power Plant'), ('INDUSTRIAL', 'Industrial'), ('STORAGE', 'Storage')], max_length=20)),
-                ('latitude', models.FloatField()),
-                ('longitude', models.FloatField()),
-                ('storage_capacity', models.FloatField()),
-                ('current_inventory', models.FloatField()),
-                ('min_safe_inventory', models.FloatField()),
-                ('dynamic_reorder_point', models.FloatField(null=True)),
-                ('delivery_window_start', models.TimeField()),
-                ('delivery_window_end', models.TimeField()),
-                ('delivery_days', models.JSONField(default=list)),
-                ('is_active', models.BooleanField(default=True)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=200)),
+                (
+                    "facility_type",
+                    models.CharField(
+                        choices=[("POWER_PLANT", "Power Plant"), ("INDUSTRIAL", "Industrial"), ("STORAGE", "Storage")],
+                        max_length=20,
+                    ),
+                ),
+                ("latitude", models.FloatField()),
+                ("longitude", models.FloatField()),
+                ("storage_capacity", models.FloatField()),
+                ("current_inventory", models.FloatField()),
+                ("min_safe_inventory", models.FloatField()),
+                ("dynamic_reorder_point", models.FloatField(null=True)),
+                ("delivery_window_start", models.TimeField()),
+                ("delivery_window_end", models.TimeField()),
+                ("delivery_days", models.JSONField(default=list)),
+                ("is_active", models.BooleanField(default=True)),
             ],
         ),
         migrations.CreateModel(
-            name='FuelType',
+            name="FuelType",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=50)),
-                ('unit', models.CharField(max_length=20)),
-                ('density_kg_per_unit', models.FloatField()),
-                ('hazmat_class', models.CharField(blank=True, max_length=10)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=50)),
+                ("unit", models.CharField(max_length=20)),
+                ("density_kg_per_unit", models.FloatField()),
+                ("hazmat_class", models.CharField(blank=True, max_length=10)),
             ],
         ),
         migrations.CreateModel(
-            name='PlanningCycle',
+            name="PlanningCycle",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('triggered_at', models.DateTimeField(auto_now_add=True)),
-                ('trigger_type', models.CharField(choices=[('SCHEDULED', 'Scheduled'), ('MANUAL', 'Manual'), ('EMERGENCY', 'Emergency')], max_length=20)),
-                ('facilities_in_queue', models.IntegerField()),
-                ('deliveries_created', models.IntegerField()),
-                ('total_distance_km', models.FloatField()),
-                ('total_cost', models.FloatField()),
-                ('solver_time_ms', models.FloatField()),
-                ('baseline_cost', models.FloatField(null=True)),
-                ('cost_reduction_pct', models.FloatField(null=True)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("triggered_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "trigger_type",
+                    models.CharField(
+                        choices=[("SCHEDULED", "Scheduled"), ("MANUAL", "Manual"), ("EMERGENCY", "Emergency")],
+                        max_length=20,
+                    ),
+                ),
+                ("facilities_in_queue", models.IntegerField()),
+                ("deliveries_created", models.IntegerField()),
+                ("total_distance_km", models.FloatField()),
+                ("total_cost", models.FloatField()),
+                ("solver_time_ms", models.FloatField()),
+                ("baseline_cost", models.FloatField(null=True)),
+                ("cost_reduction_pct", models.FloatField(null=True)),
             ],
         ),
         migrations.CreateModel(
-            name='Delivery',
+            name="Delivery",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('planned_date', models.DateField()),
-                ('status', models.CharField(choices=[('PLANNED', 'Planned'), ('IN_TRANSIT', 'In Transit'), ('DELIVERED', 'Delivered'), ('FAILED', 'Failed')], max_length=20)),
-                ('total_distance_km', models.FloatField(null=True)),
-                ('total_cost', models.FloatField(null=True)),
-                ('route_json', models.JSONField(null=True)),
-                ('solver_time_ms', models.FloatField(null=True)),
-                ('depot', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.depot')),
-                ('created_by_planning_cycle', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, to='core.planningcycle')),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("planned_date", models.DateField()),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("PLANNED", "Planned"),
+                            ("IN_TRANSIT", "In Transit"),
+                            ("DELIVERED", "Delivered"),
+                            ("FAILED", "Failed"),
+                        ],
+                        max_length=20,
+                    ),
+                ),
+                ("total_distance_km", models.FloatField(null=True)),
+                ("total_cost", models.FloatField(null=True)),
+                ("route_json", models.JSONField(null=True)),
+                ("solver_time_ms", models.FloatField(null=True)),
+                ("depot", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="core.depot")),
+                (
+                    "created_by_planning_cycle",
+                    models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, to="core.planningcycle"),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='DepotFacilityAssignment',
+            name="DepotFacilityAssignment",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('depot', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.depot')),
-                ('facility', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.facility')),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("depot", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="core.depot")),
+                ("facility", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="core.facility")),
             ],
             options={
-                'unique_together': {('depot', 'facility')},
+                "unique_together": {("depot", "facility")},
             },
         ),
         migrations.AddField(
-            model_name='depot',
-            name='facilities',
-            field=models.ManyToManyField(through='core.DepotFacilityAssignment', to='core.facility'),
+            model_name="depot",
+            name="facilities",
+            field=models.ManyToManyField(through="core.DepotFacilityAssignment", to="core.facility"),
         ),
         migrations.CreateModel(
-            name='DeliveryItem',
+            name="DeliveryItem",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('quantity', models.FloatField()),
-                ('planned_arrival', models.DateTimeField()),
-                ('actual_arrival', models.DateTimeField(null=True)),
-                ('sequence', models.PositiveIntegerField()),
-                ('delivery', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='items', to='core.delivery')),
-                ('facility', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.facility')),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("quantity", models.FloatField()),
+                ("planned_arrival", models.DateTimeField()),
+                ("actual_arrival", models.DateTimeField(null=True)),
+                ("sequence", models.PositiveIntegerField()),
+                (
+                    "delivery",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, related_name="items", to="core.delivery"
+                    ),
+                ),
+                ("facility", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="core.facility")),
             ],
         ),
         migrations.CreateModel(
-            name='AnomalyAlert',
+            name="AnomalyAlert",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('timestamp', models.DateTimeField()),
-                ('anomaly_type', models.CharField(choices=[('LEAK', 'Leak'), ('THEFT', 'Theft'), ('EQUIPMENT_DEGRADATION', 'Equipment Degradation'), ('DEMAND_SHIFT', 'Demand Shift'), ('SENSOR_FAULT', 'Sensor Fault')], max_length=30)),
-                ('score', models.FloatField()),
-                ('actual_consumption', models.FloatField()),
-                ('predicted_consumption', models.FloatField()),
-                ('is_acknowledged', models.BooleanField(default=False)),
-                ('notes', models.TextField(blank=True)),
-                ('acknowledged_by', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL)),
-                ('facility', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='alerts', to='core.facility')),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("timestamp", models.DateTimeField()),
+                (
+                    "anomaly_type",
+                    models.CharField(
+                        choices=[
+                            ("LEAK", "Leak"),
+                            ("THEFT", "Theft"),
+                            ("EQUIPMENT_DEGRADATION", "Equipment Degradation"),
+                            ("DEMAND_SHIFT", "Demand Shift"),
+                            ("SENSOR_FAULT", "Sensor Fault"),
+                        ],
+                        max_length=30,
+                    ),
+                ),
+                ("score", models.FloatField()),
+                ("actual_consumption", models.FloatField()),
+                ("predicted_consumption", models.FloatField()),
+                ("is_acknowledged", models.BooleanField(default=False)),
+                ("notes", models.TextField(blank=True)),
+                (
+                    "acknowledged_by",
+                    models.ForeignKey(
+                        null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL
+                    ),
+                ),
+                (
+                    "facility",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, related_name="alerts", to="core.facility"
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='Forecast',
+            name="Forecast",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('model_version', models.CharField(max_length=100)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('horizon_days', models.IntegerField(default=14)),
-                ('predictions_json', models.JSONField()),
-                ('rmse', models.FloatField(null=True)),
-                ('facility', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='forecasts', to='core.facility')),
-            ],
-        ),
-        migrations.AddField(
-            model_name='facility',
-            name='fuel_type',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to='core.fueltype'),
-        ),
-        migrations.AddField(
-            model_name='depot',
-            name='fuel_type',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to='core.fueltype'),
-        ),
-        migrations.CreateModel(
-            name='InventoryLog',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('timestamp', models.DateTimeField()),
-                ('inventory_level', models.FloatField()),
-                ('consumption', models.FloatField()),
-                ('temperature', models.FloatField(null=True)),
-                ('wind_speed', models.FloatField(null=True)),
-                ('solar_irradiance', models.FloatField(null=True)),
-                ('facility', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='inventory_logs', to='core.facility')),
-            ],
-        ),
-        migrations.CreateModel(
-            name='ModelRegistry',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('model_type', models.CharField(choices=[('DEMAND_FORECAST', 'Demand Forecast'), ('ANOMALY_DETECTOR', 'Anomaly Detector')], max_length=30)),
-                ('mlflow_run_id', models.CharField(max_length=100)),
-                ('version', models.IntegerField()),
-                ('is_active', models.BooleanField(default=False)),
-                ('trained_at', models.DateTimeField()),
-                ('training_rmse', models.FloatField(null=True)),
-                ('validation_rmse', models.FloatField(null=True)),
-                ('drift_ratio', models.FloatField(default=1.0)),
-                ('last_drift_check', models.DateTimeField(null=True)),
-                ('facility', models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, to='core.facility')),
-            ],
-        ),
-        migrations.CreateModel(
-            name='Vehicle',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('registration', models.CharField(max_length=50, unique=True)),
-                ('capacity', models.FloatField()),
-                ('cost_per_km', models.FloatField()),
-                ('is_available', models.BooleanField(default=True)),
-                ('depot', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='vehicles', to='core.depot')),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("model_version", models.CharField(max_length=100)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("horizon_days", models.IntegerField(default=14)),
+                ("predictions_json", models.JSONField()),
+                ("rmse", models.FloatField(null=True)),
+                (
+                    "facility",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, related_name="forecasts", to="core.facility"
+                    ),
+                ),
             ],
         ),
         migrations.AddField(
-            model_name='delivery',
-            name='vehicle',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.vehicle'),
+            model_name="facility",
+            name="fuel_type",
+            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to="core.fueltype"),
+        ),
+        migrations.AddField(
+            model_name="depot",
+            name="fuel_type",
+            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to="core.fueltype"),
+        ),
+        migrations.CreateModel(
+            name="InventoryLog",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("timestamp", models.DateTimeField()),
+                ("inventory_level", models.FloatField()),
+                ("consumption", models.FloatField()),
+                ("temperature", models.FloatField(null=True)),
+                ("wind_speed", models.FloatField(null=True)),
+                ("solar_irradiance", models.FloatField(null=True)),
+                (
+                    "facility",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, related_name="inventory_logs", to="core.facility"
+                    ),
+                ),
+            ],
+        ),
+        migrations.CreateModel(
+            name="ModelRegistry",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "model_type",
+                    models.CharField(
+                        choices=[("DEMAND_FORECAST", "Demand Forecast"), ("ANOMALY_DETECTOR", "Anomaly Detector")],
+                        max_length=30,
+                    ),
+                ),
+                ("mlflow_run_id", models.CharField(max_length=100)),
+                ("version", models.IntegerField()),
+                ("is_active", models.BooleanField(default=False)),
+                ("trained_at", models.DateTimeField()),
+                ("training_rmse", models.FloatField(null=True)),
+                ("validation_rmse", models.FloatField(null=True)),
+                ("drift_ratio", models.FloatField(default=1.0)),
+                ("last_drift_check", models.DateTimeField(null=True)),
+                (
+                    "facility",
+                    models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, to="core.facility"),
+                ),
+            ],
+        ),
+        migrations.CreateModel(
+            name="Vehicle",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("registration", models.CharField(max_length=50, unique=True)),
+                ("capacity", models.FloatField()),
+                ("cost_per_km", models.FloatField()),
+                ("is_available", models.BooleanField(default=True)),
+                (
+                    "depot",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, related_name="vehicles", to="core.depot"
+                    ),
+                ),
+            ],
+        ),
+        migrations.AddField(
+            model_name="delivery",
+            name="vehicle",
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="core.vehicle"),
         ),
         migrations.AddIndex(
-            model_name='facility',
-            index=models.Index(fields=['fuel_type', 'is_active'], name='core_facili_fuel_ty_f29e9b_idx'),
+            model_name="facility",
+            index=models.Index(fields=["fuel_type", "is_active"], name="core_facili_fuel_ty_f29e9b_idx"),
         ),
         migrations.AddIndex(
-            model_name='facility',
-            index=models.Index(fields=['current_inventory'], name='core_facili_current_516c9a_idx'),
+            model_name="facility",
+            index=models.Index(fields=["current_inventory"], name="core_facili_current_516c9a_idx"),
         ),
         migrations.AddIndex(
-            model_name='inventorylog',
-            index=models.Index(fields=['facility', '-timestamp'], name='core_invent_facilit_890cbb_idx'),
+            model_name="inventorylog",
+            index=models.Index(fields=["facility", "-timestamp"], name="core_invent_facilit_890cbb_idx"),
         ),
         migrations.AlterUniqueTogether(
-            name='inventorylog',
-            unique_together={('facility', 'timestamp')},
+            name="inventorylog",
+            unique_together={("facility", "timestamp")},
         ),
     ]
