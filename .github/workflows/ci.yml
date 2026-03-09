@@ -70,6 +70,8 @@ jobs:
             anomaly/tests/test_service.py \
             anomaly/tests/test_detector.py \
             optimizer/tests/test_service.py \
+            optimizer/tests/test_cpu_backend.py \
+            optimizer/tests/test_benchmark.py \
             forecaster/tests/test_model.py \
             forecaster/tests/test_cpu_backend.py \
             ml_pipeline/tests/test_drift.py \

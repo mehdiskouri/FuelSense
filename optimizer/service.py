@@ -14,6 +14,7 @@ from starlette.responses import Response
 from fuelsense_common.compute import ComputeBackend, DeviceType, resolve_device
 from fuelsense_common.registry import get_backend
 from fuelsense_common.schemas import HealthResponse, OptimizeRequest, OptimizeResponse
+import optimizer.backends  # noqa: F401
 
 SOLVER_TIME = Histogram(
     "optimizer_solver_time_ms",
