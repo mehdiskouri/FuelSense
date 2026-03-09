@@ -20,10 +20,10 @@ install-optimizer: ## Install optimizer CPU + dev dependencies
 
 install-all: ## Install all CPU service dependencies + dev dependencies
 	pip install -r requirements/base.txt \
-		-r requirements/forecaster-cpu.txt \
-		-r requirements/anomaly.txt \
-		-r requirements/optimizer-cpu.txt \
-		-r requirements/dev.txt
+	-r requirements/forecaster-cpu.txt \
+	-r requirements/anomaly.txt \
+	-r requirements/optimizer-cpu.txt \
+	-r requirements/dev.txt
 
 lint: ## Run Ruff lint and format checks
 	ruff check .
@@ -66,12 +66,15 @@ bench-optimizer: ## Run CPU and GPU optimizer benchmarks
 
 k8s-local: ## Start local kind cluster and deploy helm chart
 	kind create cluster --config infra/kind-config.yaml || true
-	helm upgrade --install fuelsense charts/fuelsense/
+	helm upgrade --install fuelsense charts/fuelsense/ --namespace fuelsense --create-namespace --wait --timeout 300s
+	helm test fuelsense -n fuelsense
 
 k8s-local-gpu: ## Deploy helm chart with GPU values
 	kind create cluster --config infra/kind-config.yaml || true
-	helm upgrade --install fuelsense charts/fuelsense/ -f charts/fuelsense/values-gpu.yaml
+	helm upgrade --install fuelsense charts/fuelsense/ -f charts/fuelsense/values-gpu.yaml --namespace fuelsense --create-namespace --wait --timeout 300s
+	helm test fuelsense -n fuelsense
 
-k8s-down: ## Tear down local kind cluster
-	helm uninstall fuelsense || true
+k8s-down: ## Tear down local kind cluster and namespace
+	helm uninstall fuelsense -n fuelsense || true
+	kubectl delete namespace fuelsense --ignore-not-found=true
 	kind delete cluster

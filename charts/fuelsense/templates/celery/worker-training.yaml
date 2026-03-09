@@ -1,1 +1,41 @@
-# Phase 0 placeholder template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-celery-training
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.celery.training.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: celery-training
+      {{- include "fuelsense.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: celery-training
+        {{- include "fuelsense.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.celery.training.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celery.training.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker-training
+          image: {{ include "fuelsense.image" (dict "Values" .Values "image" .Values.django.image) }}
+          command: ["celery", "-A", "fuelsense", "worker", "-Q", "training", "--loglevel=info", "-c", "{{ .Values.celery.training.concurrency }}"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "fuelsense.fullname" . }}-config
+            - secretRef:
+                name: {{ include "fuelsense.fullname" . }}-secret
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "celery -A fuelsense inspect ping -d celery@$(hostname) | grep -q pong"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.celery.training.resources | nindent 12 }}

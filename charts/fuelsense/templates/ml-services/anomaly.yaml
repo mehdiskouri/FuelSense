@@ -1,1 +1,48 @@
-# Phase 0 placeholder template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-anomaly
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.anomaly.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: anomaly
+      {{- include "fuelsense.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: anomaly
+        {{- include "fuelsense.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: anomaly
+          image: {{ include "fuelsense.image" (dict "Values" .Values "image" .Values.anomaly.image) }}
+          ports:
+            - containerPort: {{ .Values.anomaly.servicePort }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.anomaly.servicePort }}
+            initialDelaySeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.anomaly.servicePort }}
+            initialDelaySeconds: 20
+          resources:
+            {{- toYaml .Values.anomaly.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-anomaly
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: anomaly
+    {{- include "fuelsense.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: {{ .Values.anomaly.servicePort }}
+      targetPort: {{ .Values.anomaly.servicePort }}

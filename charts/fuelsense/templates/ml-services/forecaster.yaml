@@ -1,1 +1,59 @@
-# Phase 0 placeholder template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-forecaster
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.forecaster.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: forecaster
+      {{- include "fuelsense.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: forecaster
+        {{- include "fuelsense.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.forecaster.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.forecaster.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: forecaster
+          image: {{ include "fuelsense.image" (dict "Values" .Values "image" .Values.forecaster.image) }}
+          ports:
+            - containerPort: {{ .Values.forecaster.servicePort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "fuelsense.fullname" . }}-config
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.forecaster.servicePort }}
+            initialDelaySeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.forecaster.servicePort }}
+            initialDelaySeconds: 60
+          resources:
+            {{- toYaml .Values.forecaster.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-forecaster
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: forecaster
+    {{- include "fuelsense.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: {{ .Values.forecaster.servicePort }}
+      targetPort: {{ .Values.forecaster.servicePort }}

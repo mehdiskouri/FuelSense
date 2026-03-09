@@ -24,6 +24,31 @@ jobs:
       - name: Mypy
         run: mypy fuelsense/ fuelsense_common/
 
+  validate-helm:
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+      - name: Helm lint CPU and GPU values
+        run: |
+          helm lint charts/fuelsense/
+          helm lint charts/fuelsense/ -f charts/fuelsense/values-gpu.yaml
+      - name: Helm template + kubeconform CPU
+        run: |
+          helm template fuelsense charts/fuelsense/ | kubeconform -strict -summary
+      - name: Helm template + kubeconform GPU
+        run: |
+          helm template fuelsense charts/fuelsense/ -f charts/fuelsense/values-gpu.yaml | kubeconform -strict -summary
+
   test-django:
     runs-on: ubuntu-latest
     needs: [lint-and-typecheck]
@@ -87,7 +112,7 @@ jobs:
 
   build-images:
     runs-on: ubuntu-latest
-    needs: [test-django, test-ml-services]
+    needs: [test-django, test-ml-services, validate-helm]
     strategy:
       fail-fast: false
       matrix:
@@ -115,13 +140,35 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-images]
     steps:
-      - name: Placeholder deploy job
-        run: echo "Staging deploy activates in deployment phases"
+      - uses: actions/checkout@v4
+      - uses: engineerd/setup-kind@v0.6.2
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+      - name: Deploy with Helm
+        run: |
+          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
+          helm upgrade --install fuelsense charts/fuelsense \
+            --namespace fuelsense \
+            --create-namespace \
+            --set global.imageTag=${{ github.sha }} \
+            --wait --timeout 300s
 
   smoke-test:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: [deploy-staging]
     steps:
-      - name: Placeholder smoke test
-        run: echo "Smoke tests activate once staging exists"
+      - uses: actions/checkout@v4
+      - uses: engineerd/setup-kind@v0.6.2
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+      - name: Run Helm smoke test
+        run: |
+          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
+          helm upgrade --install fuelsense charts/fuelsense \
+            --namespace fuelsense \
+            --create-namespace \
+            --wait --timeout 300s
+          helm test fuelsense -n fuelsense

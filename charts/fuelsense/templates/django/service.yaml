@@ -1,1 +1,17 @@
-# Phase 0 placeholder template
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-django
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fuelsense.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: django
+    {{- include "fuelsense.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: {{ .Values.django.servicePort }}
+      targetPort: {{ .Values.django.servicePort }}
+      protocol: TCP
+      name: http

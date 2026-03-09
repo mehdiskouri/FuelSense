@@ -1,1 +1,88 @@
-# Phase 0 placeholder template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-prometheus-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: django
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['{{ include "fuelsense.fullname" . }}-django:8000']
+      - job_name: forecaster
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['{{ include "fuelsense.fullname" . }}-forecaster:8001']
+      - job_name: anomaly
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['{{ include "fuelsense.fullname" . }}-anomaly:8002']
+      - job_name: optimizer
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['{{ include "fuelsense.fullname" . }}-optimizer:8003']
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-prometheus
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: prometheus
+      {{- include "fuelsense.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: prometheus
+        {{- include "fuelsense.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: prometheus
+          image: {{ .Values.monitoring.prometheus.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time={{ .Values.monitoring.prometheus.retention }}
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "fuelsense.fullname" . }}-prometheus-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "fuelsense.fullname" . }}-prometheus-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-prometheus-pvc
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.monitoring.prometheus.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-prometheus
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app.kubernetes.io/component: prometheus
+    {{- include "fuelsense.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: 9090
+      targetPort: 9090

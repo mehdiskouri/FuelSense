@@ -1,1 +1,21 @@
-# Phase 0 placeholder template
+{{- if .Values.forecaster.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-forecaster
+  namespace: {{ .Values.global.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "fuelsense.fullname" . }}-forecaster
+  minReplicas: {{ .Values.forecaster.hpa.minReplicas }}
+  maxReplicas: {{ .Values.forecaster.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.forecaster.hpa.targetCPUUtilizationPercentage }}
+{{- end }}

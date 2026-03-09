@@ -1,6 +1,6 @@
 apiVersion: v2
 name: fuelsense
-description: FuelSense Helm chart skeleton
+description: FuelSense production Helm chart for Django, Celery, ML services, and observability
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"

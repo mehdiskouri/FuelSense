@@ -1,5 +1,67 @@
-gpu:
+compute:
+  device: cuda
+
+serviceMesh:
   enabled: true
-image:
-  repository: ghcr.io/example/fuelsense-django
-  tag: latest-gpu
+
+forecaster:
+  image: forecaster-gpu
+  env:
+    FUELSENSE_DEVICE: cuda
+    FUELSENSE_CUDA_MEMORY_FRACTION: "0.5"
+    FUELSENSE_FORECAST_BATCH_SIZE_GPU: "256"
+    FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_GPU: "512"
+  nodeSelector:
+    accelerator: nvidia
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+      nvidia.com/gpu: "1"
+    limits:
+      cpu: "2"
+      memory: 8Gi
+      nvidia.com/gpu: "1"
+
+optimizer:
+  image: optimizer-gpu
+  env:
+    FUELSENSE_DEVICE: cuda
+    FUELSENSE_CUDA_MEMORY_FRACTION: "0.5"
+  nodeSelector:
+    accelerator: nvidia
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+      nvidia.com/gpu: "1"
+    limits:
+      cpu: "2"
+      memory: 8Gi
+      nvidia.com/gpu: "1"
+
+celery:
+  training:
+    nodeSelector:
+      accelerator: nvidia
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+        nvidia.com/gpu: "1"
+      limits:
+        cpu: "2"
+        memory: 8Gi
+        nvidia.com/gpu: "1"

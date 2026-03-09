@@ -1,1 +1,24 @@
-# Phase 0 placeholder template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fuelsense.labels" . | nindent 4 }}
+data:
+  DJANGO_SETTINGS_MODULE: fuelsense.settings.production
+  ALLOWED_HOSTS: "*"
+  REDIS_URL: redis://{{ include "fuelsense.fullname" . }}-redis:6379/0
+  CELERY_BROKER_URL: redis://{{ include "fuelsense.fullname" . }}-redis:6379/1
+  CELERY_RESULT_BACKEND: redis://{{ include "fuelsense.fullname" . }}-redis:6379/2
+  MLFLOW_TRACKING_URI: http://{{ include "fuelsense.fullname" . }}-mlflow:5000
+  FORECASTER_URL: http://{{ include "fuelsense.fullname" . }}-forecaster:8001
+  ANOMALY_URL: http://{{ include "fuelsense.fullname" . }}-anomaly:8002
+  OPTIMIZER_URL: http://{{ include "fuelsense.fullname" . }}-optimizer:8003
+  FUELSENSE_DEVICE: {{ .Values.compute.device | quote }}
+  FUELSENSE_FORECAST_BATCH_SIZE_CPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_BATCH_SIZE_CPU | default "16" | quote }}
+  FUELSENSE_FORECAST_BATCH_SIZE_GPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_BATCH_SIZE_GPU | default "256" | quote }}
+  FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_CPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_CPU | default "32" | quote }}
+  FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_GPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_GPU | default "512" | quote }}
+  FUELSENSE_OPTIMIZER_BACKEND: {{ .Values.optimizer.env.FUELSENSE_OPTIMIZER_BACKEND | default "ortools" | quote }}
+  FUELSENSE_OPTIMIZER_TIME_LIMIT_MS: {{ .Values.optimizer.env.FUELSENSE_OPTIMIZER_TIME_LIMIT_MS | default "10000" | quote }}
