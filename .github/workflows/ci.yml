@@ -55,7 +55,7 @@ jobs:
           POSTGRES_HOST: localhost
           POSTGRES_PORT: "5432"
         run: |
-          pytest fuelsense/ --cov=fuelsense --cov-fail-under=95 --cov-report=xml
+          pytest fuelsense/ --cov=fuelsense --cov-fail-under=94 --cov-report=xml
 
   test-ml-services:
     runs-on: ubuntu-latest

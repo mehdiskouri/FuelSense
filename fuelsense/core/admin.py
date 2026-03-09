@@ -8,7 +8,7 @@ from io import BytesIO
 import matplotlib
 from django.contrib import admin, messages
 from django.db.models import Avg, Count, F
-from django.shortcuts import redirect, render
+from django.shortcuts import render
 from django.urls import path
 from django.utils import timezone
 

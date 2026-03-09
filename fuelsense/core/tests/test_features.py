@@ -24,7 +24,7 @@ def test_build_lookback_matrix_shape_and_dow_features(sample_facilities: list[ob
             solar_irradiance=300.0,
         )
 
-    matrix = build_lookback_matrix([int(getattr(facility, "id"))])
+    matrix = build_lookback_matrix([int(facility.id)])
     assert matrix.shape == (1, 90, 6)
     assert np.all(np.isfinite(matrix))
 
@@ -43,7 +43,7 @@ def test_extract_training_data_temporal_split(sample_facilities: list[object]) -
             solar_irradiance=500.0,
         )
 
-    data = extract_training_data(int(getattr(facility, "id")))
+    data = extract_training_data(int(facility.id))
     assert data["test_data"].shape[0] == 14
     assert data["val_data"].shape[0] == 14
     assert data["train_data"].shape[0] == 32
@@ -89,7 +89,7 @@ def test_build_anomaly_features_returns_expected_shape(sample_facilities: list[o
     delivery = DeliveryFactory()
     DeliveryItemFactory(delivery=delivery, facility=facility, actual_arrival=timezone.now() - timedelta(hours=8))
 
-    features = build_anomaly_features(int(getattr(facility, "id")))
+    features = build_anomaly_features(int(facility.id))
     assert features is not None
     assert len(features.keys()) == 7
     assert "z_score" in features
@@ -116,7 +116,7 @@ def test_build_anomaly_features_zscore_is_correct(sample_facilities: list[object
         predictions_json=[{"day": 1, "p10": 21.0, "p50": 22.0, "p90": 25.0}],
     )
 
-    features = build_anomaly_features(int(getattr(facility, "id")))
+    features = build_anomaly_features(int(facility.id))
     assert features is not None
 
     expected_std = float(np.std(np.asarray(list(reversed(values)), dtype=np.float32)))
@@ -128,4 +128,4 @@ def test_build_anomaly_features_zscore_is_correct(sample_facilities: list[object
 def test_build_anomaly_features_returns_none_when_insufficient_data(sample_facilities: list[object]) -> None:
     facility = sample_facilities[0]
     InventoryLogFactory(facility=facility, consumption=20.0)
-    assert build_anomaly_features(int(getattr(facility, "id"))) is None
+    assert build_anomaly_features(int(facility.id)) is None

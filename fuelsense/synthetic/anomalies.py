@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
 import numpy as np
 
@@ -29,8 +28,8 @@ class AnomalyInjector:
 
 	def __init__(self, trigger_probability: float = 0.05) -> None:
 		self.trigger_probability = trigger_probability
-		self._active: Dict[str, AnomalyEvent] = {}
-		self._shift_multiplier: Dict[str, float] = {}
+		self._active: dict[str, AnomalyEvent] = {}
+		self._shift_multiplier: dict[str, float] = {}
 
 	def _sample_event(self, day: int, rng: np.random.Generator) -> AnomalyEvent:
 		anomaly_type = str(rng.choice(self.anomaly_types))

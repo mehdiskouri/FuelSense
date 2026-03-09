@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from celery import current_app
 from django.core.cache import cache
-from django.db.models import Avg, Count, F
+from django.db.models import Avg, F
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action

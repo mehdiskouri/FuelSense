@@ -57,7 +57,7 @@ def test_train_and_register_logs_and_returns(monkeypatch: Any, tmp_path: Any) ->
     class _Run:
         info = _RunInfo()
 
-        def __enter__(self) -> "_Run":
+        def __enter__(self) -> _Run:
             return self
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
