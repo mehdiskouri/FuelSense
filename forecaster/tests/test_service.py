@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -87,6 +88,74 @@ async def test_predict_batch_contract() -> None:
 	assert response.status_code == 200
 	data = response.json()
 	assert len(data["responses"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_predict_batch_empty_requests_returns_200() -> None:
+	class MockBackend:
+		device = service.DeviceType.CPU
+
+		def warmup(self) -> None:
+			return None
+
+		def health_check(self) -> dict[str, object]:
+			return {"status": "ok"}
+
+		def predict(self, lookback: Any) -> list[list[list[float]]]:
+			_ = lookback
+			return []
+
+	service.backend = MockBackend()
+	service.device_type = service.DeviceType.CPU
+	transport = ASGITransport(app=service.app)
+	async with AsyncClient(transport=transport, base_url="http://test") as client:
+		response = await client.post("/predict/batch", json={"requests": []})
+	assert response.status_code == 200
+	assert response.json()["responses"] == []
+
+
+def test_coerce_predictions_rejects_invalid_shape() -> None:
+	with pytest.raises(ValueError):
+		service._coerce_predictions([1.0, 2.0, 3.0])
+
+
+@pytest.mark.asyncio
+async def test_lifespan_handles_missing_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("forecaster.service.resolve_device", lambda: service.DeviceType.CPU)
+	monkeypatch.setattr(
+		"forecaster.service.get_backend",
+		lambda _name, _device: (_ for _ in ()).throw(RuntimeError("missing backend")),
+	)
+
+	transport = ASGITransport(app=service.app)
+	async with AsyncClient(transport=transport, base_url="http://test") as client:
+		response = await client.get("/health")
+	assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_lifespan_load_model_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+	class MockBackend:
+		loaded = False
+
+		def load_model(self, path: str) -> None:
+			self.loaded = bool(path)
+
+		def health_check(self) -> dict[str, object]:
+			return {"status": "ok"}
+
+	backend = MockBackend()
+	model_path = tmp_path / "model.pt"
+	model_path.write_text("placeholder")
+
+	monkeypatch.setattr("forecaster.service.resolve_device", lambda: service.DeviceType.CPU)
+	monkeypatch.setattr("forecaster.service.get_backend", lambda _name, _device: backend)
+	monkeypatch.setenv("MODEL_PATH", os.fspath(model_path))
+
+	transport = ASGITransport(app=service.app)
+	async with AsyncClient(transport=transport, base_url="http://test") as client:
+		response = await client.get("/health")
+	assert response.status_code == 200
 
 
 @pytest.mark.asyncio

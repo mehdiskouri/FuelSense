@@ -1,5 +1,7 @@
 """MLflow-driven training pipeline for demand forecaster models."""
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import hashlib
@@ -10,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import mlflow
-import mlflow.pytorch
+import mlflow.pytorch as mlflow_pytorch
 import numpy as np
 import torch
 
@@ -83,13 +85,15 @@ class ForecastTrainer:
             preds = model_for_eval(test_x)
             p50 = preds[:, :, 1].mean(dim=1).detach().cpu().numpy()
             y_true = np.asarray(test_targets, dtype=np.float32)
-            mse = float(np.mean((p50 - y_true) ** 2)) if y_true.size else 0.0
+            mse = float(np.asarray(np.mean((p50 - y_true) ** 2) if y_true.size else 0.0, dtype=np.float64).item())
             test_rmse = float(np.sqrt(max(mse, 0.0)))
             denom = np.clip(np.abs(y_true), a_min=1e-6, a_max=None)
-            test_mape = float(np.mean(np.abs((p50 - y_true) / denom)) * 100) if y_true.size else 0.0
+            test_mape = float(
+                np.asarray(np.mean(np.abs((p50 - y_true) / denom)) * 100 if y_true.size else 0.0, dtype=np.float64).item()
+            )
 
         with mlflow.start_run(run_name=run_name) as run:
-            params = {
+            params: dict[str, str | int | float] = {
                 "facility_id": facility_id if facility_id is not None else "global",
                 "device": device.value,
                 "lookback_days": self.config.lookback_days,
@@ -139,7 +143,8 @@ class ForecastTrainer:
                 registered_name = (
                     f"demand-forecaster-{facility_id}" if facility_id is not None else "demand-forecaster-global"
                 )
-                mlflow.pytorch.log_model(model_artifact, artifact_path="model", registered_model_name=registered_name)
+                log_model_any: Any = mlflow_pytorch.log_model
+                log_model_any(model_artifact, artifact_path="model", registered_model_name=registered_name)
 
             mlflow.set_tags(
                 {
