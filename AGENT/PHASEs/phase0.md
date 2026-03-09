@@ -116,7 +116,7 @@ Populate all 7 requirements files with exact version pins per PRD §11 and Archi
    - `torch>=2.2,<2.3` (CPU index), `fastapi>=0.110,<0.112`, `uvicorn[standard]>=0.29,<0.30`, `pydantic>=2.6,<2.7`, `numpy>=1.26,<1.27`, `prometheus-client>=0.20,<0.21`
 
 3. `requirements/forecaster-gpu.txt` — PyTorch CUDA + FastAPI:
-   - `torch>=2.2,<2.3` (CUDA index), `pynvml>=11.5,<11.6`, plus all of forecaster-cpu.txt except torch
+   - `torch>=2.2,<2.3` (CUDA index), `nvidia-ml-py` (imported as `pynvml`), plus all of forecaster-cpu.txt except torch
 
 4. `requirements/anomaly.txt` — scikit-learn + FastAPI:
    - `scikit-learn>=1.4,<1.5`, `joblib>=1.3,<1.4`, `fastapi>=0.110,<0.112`, `uvicorn[standard]>=0.29,<0.30`, `pydantic>=2.6,<2.7`, `numpy>=1.26,<1.27`, `prometheus-client>=0.20,<0.21`
@@ -125,7 +125,7 @@ Populate all 7 requirements files with exact version pins per PRD §11 and Archi
    - `ortools>=9.9,<9.10`, `fastapi>=0.110,<0.112`, `uvicorn[standard]>=0.29,<0.30`, `pydantic>=2.6,<2.7`, `numpy>=1.26,<1.27`, `prometheus-client>=0.20,<0.21`
 
 6. `requirements/optimizer-gpu.txt` — OR-Tools + PyTorch + FastAPI:
-   - Everything from optimizer-cpu.txt plus `torch>=2.2,<2.3` (CUDA index), `pynvml>=11.5,<11.6`
+   - Everything from optimizer-cpu.txt plus `torch>=2.2,<2.3` (CUDA index), `nvidia-ml-py` (imported as `pynvml`)
 
 7. `requirements/dev.txt` — Testing and linting:
    - `pytest>=8.0,<8.1`, `pytest-django>=4.8,<4.9`, `pytest-cov>=4.1,<4.2`, `pytest-asyncio>=0.23,<0.24`, `factory-boy>=3.3,<3.4`, `ruff>=0.3,<0.4`, `mypy>=1.9,<1.10`, `django-stubs>=4.2,<4.3`, `httpx>=0.27,<0.28` (for FastAPI TestClient), `mlflow>=2.11,<2.12`

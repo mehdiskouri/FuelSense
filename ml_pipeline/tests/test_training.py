@@ -33,8 +33,9 @@ def _dataset() -> dict[str, np.ndarray]:
     }
 
 
-def test_train_and_register_logs_and_returns(monkeypatch: Any) -> None:
-    trainer = ForecastTrainer(tracking_uri="file:///tmp/mlruns")
+def test_train_and_register_logs_and_returns(monkeypatch: Any, tmp_path: Any) -> None:
+    mlflow_db = tmp_path / "mlflow.db"
+    trainer = ForecastTrainer(tracking_uri=f"sqlite:///{mlflow_db}")
     data = _dataset()
 
     def _resolve_device() -> DeviceType:

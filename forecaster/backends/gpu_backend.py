@@ -21,6 +21,20 @@ from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import register_backend
 
 
+def _cuda_autocast() -> Any:
+    torch_autocast: Any = getattr(torch, "autocast", None)
+    if torch_autocast is not None:
+        return torch_autocast("cuda", enabled=True)
+    return torch.cuda.amp.autocast(enabled=True)
+
+
+def _cuda_grad_scaler() -> Any:
+    grad_scaler_ctor: Any = getattr(torch, "GradScaler", None)
+    if grad_scaler_ctor is not None:
+        return grad_scaler_ctor("cuda", enabled=True)
+    return torch.cuda.amp.GradScaler(enabled=True)
+
+
 @register_backend("demand_forecaster", DeviceType.CUDA)
 class CUDAForecaster(ComputeBackend):
     device = DeviceType.CUDA
@@ -50,7 +64,7 @@ class CUDAForecaster(ComputeBackend):
     def warmup(self) -> None:
         if self.model is None:
             return
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True):
+        with torch.no_grad(), _cuda_autocast():
             dummy = torch.zeros((1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device)
             _ = self.model(dummy)
         torch.cuda.synchronize(self.cuda_device)
@@ -104,7 +118,7 @@ class CUDAForecaster(ComputeBackend):
         np_in = np.asarray(lookback, dtype=np.float32)
         cpu_tensor = torch.from_numpy(np_in).pin_memory()
 
-        with torch.cuda.stream(self.stream), torch.no_grad(), torch.cuda.amp.autocast(enabled=True):
+        with torch.cuda.stream(self.stream), torch.no_grad(), _cuda_autocast():
             gpu_tensor = cpu_tensor.to(self.cuda_device, non_blocking=True)
             preds = self.model(gpu_tensor)
             preds_cpu = preds.float().detach().cpu()
@@ -128,7 +142,7 @@ class CUDAForecaster(ComputeBackend):
         optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         optimizer_any: Any = optimizer
         scheduler = CosineAnnealingLR(optimizer, T_max=max(epochs, 1))
-        scaler = torch.cuda.amp.GradScaler(enabled=True)
+        scaler = _cuda_grad_scaler()
 
         train_x = torch.as_tensor(train_data, dtype=torch.float32)
         train_y = torch.as_tensor(train_targets, dtype=torch.float32)
@@ -158,7 +172,7 @@ class CUDAForecaster(ComputeBackend):
                 batch_y = batch_y.to(self.cuda_device, non_blocking=True)
 
                 optimizer_any.zero_grad(set_to_none=True)
-                with torch.cuda.amp.autocast(enabled=True):
+                with _cuda_autocast():
                     preds = model(batch_x)
                     target = batch_y.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
                     loss = self.loss_fn(preds, target)
@@ -172,7 +186,7 @@ class CUDAForecaster(ComputeBackend):
                 train_losses.append(float(loss.detach().cpu().item()))
 
             model.eval()
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True):
+            with torch.no_grad(), _cuda_autocast():
                 val_preds = model(val_x)
                 val_target = val_y.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
                 val_loss = float(self.loss_fn(val_preds, val_target).detach().cpu().item())
@@ -199,7 +213,7 @@ class CUDAForecaster(ComputeBackend):
         self.model = model
         self.model.eval()
 
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True):
+        with torch.no_grad(), _cuda_autocast():
             start = perf_counter()
             pred = self.model(val_x)
             torch.cuda.synchronize(self.cuda_device)

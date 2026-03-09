@@ -19,7 +19,7 @@
 2. **Dependency pinning** — Create all 7 requirements files:
    - `requirements/base.txt` — Django 5.1+, DRF 3.15+, Celery 5.4+, django-celery-beat, httpx, psycopg2-binary, redis, gunicorn, prometheus-client, django-prometheus, factory-boy
    - `requirements/forecaster-cpu.txt` — PyTorch 2.2+ (CPU), FastAPI 0.110+, uvicorn, pydantic, numpy, prometheus-client
-   - `requirements/forecaster-gpu.txt` — PyTorch 2.2+ (CUDA), FastAPI 0.110+, uvicorn, pydantic, numpy, prometheus-client, pynvml
+   - `requirements/forecaster-gpu.txt` — PyTorch 2.2+ (CUDA), FastAPI 0.110+, uvicorn, pydantic, numpy, prometheus-client, nvidia-ml-py (imported as `pynvml`)
    - `requirements/anomaly.txt` — scikit-learn 1.4+, FastAPI, uvicorn, joblib, numpy, prometheus-client
    - `requirements/optimizer-cpu.txt` — Google OR-Tools 9.9+, FastAPI, uvicorn, numpy, prometheus-client
    - `requirements/optimizer-gpu.txt` — OR-Tools 9.9+, PyTorch 2.2+ (CUDA), FastAPI, uvicorn, numpy, prometheus-client

@@ -5,4 +5,4 @@ uvicorn[standard]==0.41.0
 pydantic==2.12.5
 numpy==2.4.2
 prometheus-client==0.24.1
-pynvml==13.0.1
+nvidia-ml-py==13.580.82
