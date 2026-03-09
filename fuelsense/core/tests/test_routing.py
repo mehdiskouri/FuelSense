@@ -5,7 +5,7 @@ import datetime as dt
 import pytest
 
 from fuelsense.core.routing import _haversine, build_optimizer_request
-from fuelsense.core.tests.factories import DepotFactory, DepotFacilityAssignmentFactory, FacilityFactory, VehicleFactory
+from fuelsense.core.tests.factories import DepotFacilityAssignmentFactory, DepotFactory, FacilityFactory, VehicleFactory
 
 
 @pytest.mark.django_db
@@ -35,7 +35,15 @@ def test_build_optimizer_request_schema_and_matrix_properties() -> None:
 
     payload, facility_index_map = build_optimizer_request(depot, facilities)
 
-    assert {"depot_lat", "depot_lng", "vehicles", "stops", "distance_matrix", "max_route_duration"}.issubset(payload.keys())
+    required_keys = {
+        "depot_lat",
+        "depot_lng",
+        "vehicles",
+        "stops",
+        "distance_matrix",
+        "max_route_duration",
+    }
+    assert required_keys.issubset(payload.keys())
     matrix = payload["distance_matrix"]
     assert isinstance(matrix, list)
     assert len(matrix) == 4

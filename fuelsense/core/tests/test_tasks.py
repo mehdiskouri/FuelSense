@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from django.utils import timezone
 
 from fuelsense.core import tasks
 from fuelsense.core.models import AnomalyAlert, Delivery, DeliveryItem, Forecast, ModelRegistry, PlanningCycle
@@ -122,7 +121,7 @@ def test_run_batch_anomaly_detection_creates_alert(monkeypatch: pytest.MonkeyPat
             }
 
     class _Client:
-        def __enter__(self) -> "_Client":
+        def __enter__(self) -> _Client:
             return self
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -160,7 +159,7 @@ def test_run_batch_anomaly_detection_handles_service_failure(monkeypatch: pytest
     )
 
     class _Client:
-        def __enter__(self) -> "_Client":
+        def __enter__(self) -> _Client:
             return self
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -192,7 +191,15 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
                 "depot_lat": 24.7,
                 "depot_lng": 46.7,
                 "vehicles": [{"capacity": 1000.0, "cost_per_km": 2.0}],
-                "stops": [{"facility_index": 1, "demand": 70.0, "time_window_start": 300, "time_window_end": 900, "service_time": 30}],
+                "stops": [
+                    {
+                        "facility_index": 1,
+                        "demand": 70.0,
+                        "time_window_start": 300,
+                        "time_window_end": 900,
+                        "service_time": 30,
+                    }
+                ],
                 "distance_matrix": [[0.0, 12.0], [12.0, 0.0]],
                 "max_route_duration": 480,
             },
@@ -225,7 +232,7 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
             }
 
     class _Client:
-        def __enter__(self) -> "_Client":
+        def __enter__(self) -> _Client:
             return self
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -246,7 +253,7 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
 
 @pytest.mark.django_db
 def test_daily_tick_dispatches_chord_chain(monkeypatch: pytest.MonkeyPatch) -> None:
-    facility = FacilityFactory(is_active=True)
+    FacilityFactory(is_active=True)
     monkeypatch.setenv("FUELSENSE_ENABLE_DAILY_TICK", "1")
 
     captured: dict[str, object] = {}
@@ -259,7 +266,7 @@ def test_daily_tick_dispatches_chord_chain(monkeypatch: pytest.MonkeyPatch) -> N
         def __init__(self, name: str) -> None:
             self.name = name
 
-        def __or__(self, _other: object) -> "_Sig":
+        def __or__(self, _other: object) -> _Sig:
             return self
 
     def _fake_chord(header: list[object], callback: object) -> _Sig:
@@ -277,7 +284,7 @@ def test_daily_tick_dispatches_chord_chain(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(_Sig, "delay", lambda self: captured.setdefault("dispatched", True), raising=False)
 
     # Provide si on our fake task signatures.
-    setattr(_Sig, "si", lambda self, *args, **kwargs: _Sig(f"{self.name}.si"))
+    _Sig.si = lambda self, *args, **kwargs: _Sig(f"{self.name}.si")  # type: ignore[attr-defined]
 
     result = tasks.daily_tick()
     assert result["status"] == "dispatched"
@@ -300,7 +307,15 @@ def test_trigger_emergency_delivery_creates_emergency_cycle(monkeypatch: pytest.
                 "depot_lat": 24.7,
                 "depot_lng": 46.7,
                 "vehicles": [{"capacity": 1000.0, "cost_per_km": 2.0}],
-                "stops": [{"facility_index": 1, "demand": 90.0, "time_window_start": 300, "time_window_end": 900, "service_time": 30}],
+                "stops": [
+                    {
+                        "facility_index": 1,
+                        "demand": 90.0,
+                        "time_window_start": 300,
+                        "time_window_end": 900,
+                        "service_time": 30,
+                    }
+                ],
                 "distance_matrix": [[0.0, 10.0], [10.0, 0.0]],
                 "max_route_duration": 480,
             },
@@ -333,7 +348,7 @@ def test_trigger_emergency_delivery_creates_emergency_cycle(monkeypatch: pytest.
             }
 
     class _Client:
-        def __enter__(self) -> "_Client":
+        def __enter__(self) -> _Client:
             return self
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
