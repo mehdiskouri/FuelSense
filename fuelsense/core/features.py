@@ -11,7 +11,7 @@ from typing import Any, cast
 import numpy as np
 from django.utils import timezone
 
-from fuelsense.core.models import Facility, Forecast, InventoryLog, ModelRegistry
+from fuelsense.core.models import DeliveryItem, Facility, Forecast, InventoryLog, ModelRegistry
 
 
 @dataclass(frozen=True)
@@ -211,3 +211,89 @@ def build_drift_data() -> list[dict[str, Any]]:
 
 def active_facility_ids() -> list[int]:
     return list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
+
+
+def build_anomaly_features(facility_id: int) -> dict[str, float] | None:
+    now = timezone.now()
+    logs_qs = InventoryLog.objects.filter(facility_id=facility_id).order_by("-timestamp")
+    recent_logs = list(
+        logs_qs[:7].values("timestamp", "consumption", "temperature", "inventory_level")
+    )
+    if len(recent_logs) < 2:
+        return None
+
+    latest_log = recent_logs[0]
+    prev_log = recent_logs[1]
+    actual = _safe_float(latest_log.get("consumption"))
+    prev_consumption = _safe_float(prev_log.get("consumption"), default=0.0)
+
+    latest_forecast = (
+        Forecast.objects.filter(facility_id=facility_id)
+        .order_by("-created_at")
+        .only("predictions_json")
+        .first()
+    )
+    if latest_forecast is None:
+        return None
+
+    p50_series = _extract_prediction_series(getattr(latest_forecast, "predictions_json", []))
+    if not p50_series:
+        return None
+    predicted = float(p50_series[0])
+
+    consumption_history = [_safe_float(row.get("consumption")) for row in recent_logs]
+    rolling_std = float(np.std(np.asarray(consumption_history, dtype=np.float32)))
+    z_score = (actual - predicted) / max(rolling_std, 1e-6)
+
+    abs_z_history: list[float] = []
+    for row in recent_logs[:3]:
+        row_actual = _safe_float(row.get("consumption"))
+        row_z = (row_actual - predicted) / max(rolling_std, 1e-6)
+        abs_z_history.append(abs(row_z))
+    z_score_rolling_3d = float(np.mean(np.asarray(abs_z_history, dtype=np.float32)))
+
+    consumption_delta_pct = (actual - prev_consumption) / max(abs(prev_consumption), 1e-6)
+
+    temps = [_safe_float(row.get("temperature"), default=0.0) for row in recent_logs]
+    temp_mean = float(np.mean(np.asarray(temps, dtype=np.float32)))
+    temperature_residual = _safe_float(latest_log.get("temperature"), default=0.0) - temp_mean
+
+    latest_ts = latest_log.get("timestamp")
+    day_of_week = float(latest_ts.weekday()) if latest_ts is not None else 0.0
+
+    latest_delivery_item = (
+        DeliveryItem.objects.filter(facility_id=facility_id)
+        .order_by("-actual_arrival", "-planned_arrival")
+        .values("actual_arrival", "planned_arrival")
+        .first()
+    )
+    if latest_delivery_item is None:
+        hours_since_delivery = 9999.0
+    else:
+        arrival = latest_delivery_item.get("actual_arrival") or latest_delivery_item.get("planned_arrival")
+        if arrival is None:
+            hours_since_delivery = 9999.0
+        else:
+            hours_since_delivery = max((now - arrival).total_seconds() / 3600.0, 0.0)
+
+    facility_row = (
+        Facility.objects.filter(id=facility_id)
+        .values("storage_capacity", "current_inventory")
+        .first()
+    )
+    if facility_row is None:
+        return None
+    inventory_level_pct = _safe_float(facility_row.get("current_inventory")) / max(
+        _safe_float(facility_row.get("storage_capacity")),
+        1e-6,
+    )
+
+    return {
+        "z_score": float(z_score),
+        "z_score_rolling_3d": float(z_score_rolling_3d),
+        "consumption_delta_pct": float(consumption_delta_pct),
+        "temperature_residual": float(temperature_residual),
+        "day_of_week": float(day_of_week),
+        "hours_since_delivery": float(hours_since_delivery),
+        "inventory_level_pct": float(inventory_level_pct),
+    }

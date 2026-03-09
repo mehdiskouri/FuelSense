@@ -27,3 +27,6 @@ node_modules/
 build/
 dist/
 *.log
+
+# Private planning and internal docs
+AGENT/

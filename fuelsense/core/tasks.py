@@ -14,8 +14,8 @@ from celery import shared_task
 from django.db.models import F, Max
 from django.utils import timezone
 
-from fuelsense.core.features import build_drift_data, build_lookback_matrix, extract_training_data
-from fuelsense.core.models import Facility, Forecast, InventoryLog, ModelRegistry
+from fuelsense.core.features import build_anomaly_features, build_drift_data, build_lookback_matrix, extract_training_data
+from fuelsense.core.models import AnomalyAlert, Facility, Forecast, InventoryLog, ModelRegistry
 from ml_pipeline.drift import DriftMonitor
 from ml_pipeline.training import ForecastTrainer
 
@@ -142,8 +142,88 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
 def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[str, Any]:
     if facility_ids is None:
         facility_ids = list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
-    logger.info("run_batch_anomaly_detection invoked", extra={"facility_count": len(facility_ids)})
-    return {"facility_count": len(facility_ids)}
+
+    service_url = os.environ.get("ANOMALY_URL", "http://anomaly-detector:8002").rstrip("/")
+    endpoint = f"{service_url}/detect"
+    remote_enabled = os.environ.get("FUELSENSE_ENABLE_REMOTE_ANOMALY", "0") == "1"
+
+    anomaly_count = 0
+    for facility_id in facility_ids:
+        features = build_anomaly_features(int(facility_id))
+        if features is None:
+            continue
+
+        latest_log = (
+            InventoryLog.objects.filter(facility_id=facility_id)
+            .order_by("-timestamp")
+            .values("consumption")
+            .first()
+        )
+        recent_logs = list(
+            InventoryLog.objects.filter(facility_id=facility_id)
+            .order_by("-timestamp")
+            .values_list("consumption", flat=True)[:7]
+        )
+        latest_forecast = Forecast.objects.filter(facility_id=facility_id).order_by("-created_at").only("predictions_json").first()
+        if latest_log is None or latest_forecast is None:
+            continue
+
+        actual = float(latest_log.get("consumption") or 0.0)
+        preds = latest_forecast.predictions_json if isinstance(latest_forecast.predictions_json, list) else []
+        first_pred = preds[0] if preds else {}
+        predicted = float(first_pred.get("p50", 0.0)) if isinstance(first_pred, dict) else 0.0
+        if recent_logs:
+            mean = sum(float(x) for x in recent_logs) / len(recent_logs)
+            variance = sum((float(x) - mean) ** 2 for x in recent_logs) / len(recent_logs)
+            rolling_std = max(variance**0.5, 1e-6)
+        else:
+            rolling_std = 1e-6
+
+        payload = {
+            "facility_id": int(facility_id),
+            "actual_consumption": actual,
+            "predicted_consumption": predicted,
+            "rolling_std": rolling_std,
+            "features": features,
+        }
+
+        if remote_enabled:
+            with httpx.Client(timeout=10.0) as client:
+                try:
+                    response = client.post(endpoint, json=payload)
+                    response.raise_for_status()
+                    result = response.json()
+                except httpx.HTTPError:
+                    result = {"is_anomaly": False, "anomaly_type": None, "confidence": None}
+        else:
+            result = {"is_anomaly": False, "anomaly_type": None, "confidence": None}
+
+        if bool(result.get("is_anomaly")):
+            anomaly_type = str(result.get("anomaly_type") or "UNKNOWN")
+            if anomaly_type not in {
+                AnomalyAlert.AnomalyType.LEAK,
+                AnomalyAlert.AnomalyType.THEFT,
+                AnomalyAlert.AnomalyType.EQUIPMENT_DEGRADATION,
+                AnomalyAlert.AnomalyType.DEMAND_SHIFT,
+                AnomalyAlert.AnomalyType.SENSOR_FAULT,
+            }:
+                anomaly_type = AnomalyAlert.AnomalyType.SENSOR_FAULT
+
+            AnomalyAlert.objects.create(
+                facility_id=int(facility_id),
+                timestamp=timezone.now(),
+                anomaly_type=anomaly_type,
+                score=float(result.get("confidence") or 0.0),
+                actual_consumption=actual,
+                predicted_consumption=predicted,
+            )
+            anomaly_count += 1
+
+    logger.info(
+        "run_batch_anomaly_detection completed",
+        extra={"facility_count": len(facility_ids), "anomaly_count": anomaly_count},
+    )
+    return {"facility_count": len(facility_ids), "anomaly_count": anomaly_count}
 
 
 @shared_task(queue="training")
