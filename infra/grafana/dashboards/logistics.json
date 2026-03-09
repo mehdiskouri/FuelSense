@@ -1,1 +1,60 @@
-{"title":"logistics"}
+{
+	"title": "Logistics",
+	"uid": "logistics-dashboard",
+	"schemaVersion": 39,
+	"version": 1,
+	"refresh": "10s",
+	"time": {"from": "now-6h", "to": "now"},
+	"panels": [
+		{
+			"type": "timeseries",
+			"title": "Cost Reduction % (avg over 5m)",
+			"gridPos": {"h": 7, "w": 8, "x": 0, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "rate(optimizer_cost_reduction_pct_sum[5m]) / clamp_min(rate(optimizer_cost_reduction_pct_count[5m]), 1e-9)",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Vehicles Used (avg over 5m)",
+			"gridPos": {"h": 7, "w": 8, "x": 8, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "rate(optimizer_vehicles_used_sum[5m]) / clamp_min(rate(optimizer_vehicles_used_count[5m]), 1e-9)",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Solver Time p95 (ms)",
+			"gridPos": {"h": 7, "w": 8, "x": 16, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "histogram_quantile(0.95, sum(rate(optimizer_solver_time_ms_bucket[5m])) by (le))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "table",
+			"title": "Recent Delivery/Planning Task Throughput",
+			"gridPos": {"h": 7, "w": 24, "x": 0, "y": 7},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum by (task_name, queue) (increase(celery_task_success_total[30m]))",
+					"format": "table",
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		}
+	]
+}

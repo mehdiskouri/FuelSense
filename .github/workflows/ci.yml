@@ -47,8 +47,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements/base.txt -r requirements/dev.txt
-      - name: Placeholder test job
-        run: echo "Django tests activate in Phase 1"
+      - name: Run Django tests with coverage
+        env:
+          POSTGRES_DB: fuelsense
+          POSTGRES_USER: fuelsense
+          POSTGRES_PASSWORD: fuelsense
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+        run: |
+          pytest fuelsense/ --cov=fuelsense --cov-fail-under=95 --cov-report=xml
 
   test-ml-services:
     runs-on: ubuntu-latest

@@ -7,11 +7,25 @@ services:
       POSTGRES_PASSWORD: fuelsense
     ports:
       - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fuelsense -d fuelsense"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   django:
     build:
@@ -20,39 +34,71 @@ services:
     env_file: .env.example
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   celery-default:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q default --loglevel=info
+    command: celery -A fuelsense worker -Q default --loglevel=info -c 4
     env_file: .env.example
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     depends_on:
-      - django
-      - redis
+      django:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   celery-training:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q training --loglevel=info
+    command: celery -A fuelsense worker -Q training --loglevel=info -c 2
     env_file: .env.example
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     depends_on:
-      - django
-      - redis
+      django:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   celery-planning:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q planning --loglevel=info
+    command: celery -A fuelsense worker -Q planning --loglevel=info -c 1
     env_file: .env.example
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     depends_on:
-      - django
-      - redis
+      django:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   celery-beat:
     build:
@@ -60,9 +106,17 @@ services:
       dockerfile: Dockerfile.django
     command: celery -A fuelsense beat --loglevel=info
     env_file: .env.example
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery beat' >/dev/null"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     depends_on:
-      - django
-      - redis
+      django:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   forecaster:
     build:
@@ -70,6 +124,18 @@ services:
       dockerfile: Dockerfile.forecaster
     ports:
       - "8001:8001"
+    environment:
+      FUELSENSE_DEVICE: cpu
+      FUELSENSE_FORECAST_BATCH_SIZE_CPU: 16
+      FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_CPU: 32
+    volumes:
+      - ./models/forecaster:/models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   anomaly:
     build:
@@ -77,6 +143,14 @@ services:
       dockerfile: Dockerfile.anomaly
     ports:
       - "8002:8002"
+    volumes:
+      - ./models/anomaly:/models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   optimizer:
     build:
@@ -84,21 +158,64 @@ services:
       dockerfile: Dockerfile.optimizer
     ports:
       - "8003:8003"
+    environment:
+      FUELSENSE_DEVICE: cpu
+      FUELSENSE_OPTIMIZER_BACKEND: ortools
+      FUELSENSE_OPTIMIZER_TIME_LIMIT_MS: 10000
+    volumes:
+      - ./models/optimizer:/models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
-    command: mlflow server --host 0.0.0.0 --port 5000
+    image: ghcr.io/mlflow/mlflow:v2.11.0
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow.db --artifacts-destination /mlflow/mlruns
     ports:
       - "5000:5000"
+    volumes:
+      - mlartifacts:/mlflow/mlruns
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/ >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.50.0
     volumes:
       - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.3.0
     ports:
       - "3000:3000"
+    volumes:
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q 'ok'"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pgdata:
+  mlartifacts:

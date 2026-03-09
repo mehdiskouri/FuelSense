@@ -1,6 +1,11 @@
 global:
   scrape_interval: 15s
 scrape_configs:
-  - job_name: fuelsense
+  - job_name: fuelsense-django
+    metrics_path: /metrics
     static_configs:
-      - targets: ["django:8000", "forecaster:8001", "anomaly:8002", "optimizer:8003"]
+      - targets: ["django:8000"]
+  - job_name: fuelsense-ml
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["forecaster:8001", "anomaly:8002", "optimizer:8003"]

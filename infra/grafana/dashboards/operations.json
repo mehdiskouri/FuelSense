@@ -1,1 +1,55 @@
-{"title":"operations"}
+{
+	"title": "Operations",
+	"uid": "ops-dashboard",
+	"schemaVersion": 39,
+	"version": 1,
+	"refresh": "10s",
+	"time": {"from": "now-6h", "to": "now"},
+	"panels": [
+		{
+			"type": "stat",
+			"title": "Facilities Below Reorder",
+			"gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [{"expr": "facilities_below_reorder", "refId": "A"}]
+		},
+		{
+			"type": "stat",
+			"title": "Active Delivery Plans (5m)",
+			"gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "increase(celery_task_success_total{task_name=\"fuelsense.core.tasks.run_planning_cycle\"}[5m])",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Planning Cycle Duration p95 (s)",
+			"gridPos": {"h": 6, "w": 12, "x": 12, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "histogram_quantile(0.95, sum(rate(celery_task_duration_seconds_bucket{task_name=\"fuelsense.core.tasks.run_planning_cycle\"}[5m])) by (le))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "table",
+			"title": "Recent Planning Activity",
+			"gridPos": {"h": 8, "w": 24, "x": 0, "y": 6},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum by (task_name, queue) (increase(celery_task_success_total[30m]))",
+					"format": "table",
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		}
+	]
+}

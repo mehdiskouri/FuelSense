@@ -1,1 +1,58 @@
-{"title":"system"}
+{
+	"title": "System",
+	"uid": "system-dashboard",
+	"schemaVersion": 39,
+	"version": 1,
+	"refresh": "10s",
+	"time": {"from": "now-6h", "to": "now"},
+	"panels": [
+		{
+			"type": "timeseries",
+			"title": "Process CPU (cores)",
+			"gridPos": {"h": 7, "w": 12, "x": 0, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum by (job) (rate(process_cpu_seconds_total[5m]))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Process Memory (bytes)",
+			"gridPos": {"h": 7, "w": 12, "x": 12, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum by (job) (process_resident_memory_bytes)",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "HTTP Request Rate (rps)",
+			"gridPos": {"h": 7, "w": 12, "x": 0, "y": 7},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum(rate(django_http_requests_total_by_method_total[5m]))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "HTTP Error Rate (5xx rps)",
+			"gridPos": {"h": 7, "w": 12, "x": 12, "y": 7},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum(rate(django_http_responses_total_by_status_total{status=~\"5..\"}[5m]))",
+					"refId": "A"
+				}
+			]
+		}
+	]
+}

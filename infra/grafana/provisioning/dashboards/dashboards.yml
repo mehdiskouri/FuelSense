@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: FuelSense Dashboards
+    orgId: 1
+    folder: FuelSense
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,1 +1,65 @@
-{"title":"ml-health"}
+{
+	"title": "ML Health",
+	"uid": "ml-health-dashboard",
+	"schemaVersion": 39,
+	"version": 1,
+	"refresh": "10s",
+	"time": {"from": "now-6h", "to": "now"},
+	"panels": [
+		{
+			"type": "timeseries",
+			"title": "Forecaster Inference p95 (ms)",
+			"gridPos": {"h": 7, "w": 12, "x": 0, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "histogram_quantile(0.95, sum(rate(forecaster_inference_latency_ms_bucket[5m])) by (le))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Anomaly Inference p95 (ms)",
+			"gridPos": {"h": 7, "w": 12, "x": 12, "y": 0},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "histogram_quantile(0.95, sum(rate(anomaly_detector_inference_latency_ms_bucket[5m])) by (le))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Anomaly Detections by Type",
+			"gridPos": {"h": 7, "w": 8, "x": 0, "y": 7},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum by (anomaly_type) (increase(anomaly_detections_total[15m]))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"title": "Drift/ Retraining Triggers by Facility",
+			"gridPos": {"h": 7, "w": 8, "x": 8, "y": 7},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [
+				{
+					"expr": "sum by (facility_id) (increase(retraining_triggered_total[1h]))",
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"title": "Active Model Version Gauge",
+			"gridPos": {"h": 7, "w": 8, "x": 16, "y": 7},
+			"datasource": {"type": "prometheus", "uid": "prometheus"},
+			"targets": [{"expr": "forecaster_model_version", "refId": "A"}]
+		}
+	]
+}

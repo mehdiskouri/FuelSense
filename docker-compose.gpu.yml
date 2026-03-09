@@ -10,6 +10,11 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    environment:
+      FUELSENSE_DEVICE: cuda
+      FUELSENSE_CUDA_MEMORY_FRACTION: 0.5
+      FUELSENSE_FORECAST_BATCH_SIZE_GPU: 256
+      FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_GPU: 512
 
   optimizer:
     build:
@@ -22,3 +27,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    environment:
+      FUELSENSE_DEVICE: cuda
+      FUELSENSE_CUDA_MEMORY_FRACTION: 0.5
+      FUELSENSE_OPTIMIZER_TIME_LIMIT_MS: 10000
