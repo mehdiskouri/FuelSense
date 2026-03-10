@@ -39,6 +39,16 @@ from ml_pipeline.training import ForecastTrainer
 logger = logging.getLogger(__name__)
 
 
+def _remote_required() -> bool:
+    return os.environ.get("FUELSENSE_REQUIRE_REMOTE_SERVICES", "0") == "1"
+
+
+def _handle_remote_unavailable(service_name: str, reason: str) -> None:
+    if _remote_required():
+        raise RuntimeError(f"{service_name} unavailable ({reason}) and FUELSENSE_REQUIRE_REMOTE_SERVICES=1")
+    logger.warning("using fallback mode", extra={"service": service_name, "reason": reason})
+
+
 def _fallback_optimizer_response(payload: dict[str, object]) -> dict[str, Any]:
     vehicles_raw = payload.get("vehicles", [])
     stops_raw = payload.get("stops", [])
@@ -109,6 +119,7 @@ def _run_optimizer(payload: dict[str, object]) -> dict[str, Any]:
     remote_enabled = os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1"
 
     if not remote_enabled:
+        _handle_remote_unavailable("optimizer", "remote_disabled")
         return _fallback_optimizer_response(payload)
 
     with httpx.Client(timeout=20.0) as client:
@@ -118,6 +129,7 @@ def _run_optimizer(payload: dict[str, object]) -> dict[str, Any]:
             body = response.json()
             return body if isinstance(body, dict) else _fallback_optimizer_response(payload)
         except httpx.HTTPError:
+            _handle_remote_unavailable("optimizer", "request_failed")
             return _fallback_optimizer_response(payload)
 
 
@@ -213,6 +225,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
                 response.raise_for_status()
                 body = response.json()
             except httpx.HTTPError:
+                _handle_remote_unavailable("forecaster", "request_failed")
                 # Keep task resilient when the external forecaster service is not reachable.
                 body = {
                     "responses": [
@@ -225,6 +238,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
                     ]
                 }
     else:
+        _handle_remote_unavailable("forecaster", "remote_disabled")
         body = {
             "responses": [
                 {
@@ -270,6 +284,8 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
     service_url = os.environ.get("ANOMALY_URL", "http://anomaly-detector:8002").rstrip("/")
     endpoint = f"{service_url}/detect"
     remote_enabled = os.environ.get("FUELSENSE_ENABLE_REMOTE_ANOMALY", "0") == "1"
+    if not remote_enabled:
+        _handle_remote_unavailable("anomaly", "remote_disabled")
 
     anomaly_count = 0
     for facility_id in facility_ids:
@@ -317,6 +333,7 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
                     response.raise_for_status()
                     result = response.json()
                 except httpx.HTTPError:
+                    _handle_remote_unavailable("anomaly", "request_failed")
                     result = {"is_anomaly": False, "anomaly_type": None, "confidence": None}
         else:
             result = {"is_anomaly": False, "anomaly_type": None, "confidence": None}

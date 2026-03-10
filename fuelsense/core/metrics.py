@@ -6,7 +6,9 @@ from prometheus_client import Counter, Gauge, Histogram
 
 active_anomaly_alerts = Gauge("active_anomaly_alerts", "Unacknowledged anomaly alerts")
 facilities_below_reorder = Gauge("facilities_below_reorder", "Facilities below dynamic reorder point")
-forecast_mape_pct = Gauge("forecast_mape_pct", "Forecast RMSE proxy percentage")
+forecast_rmse = Gauge("forecast_rmse", "Forecast RMSE")
+# Backward-compatible legacy metric name. It carries RMSE values, not MAPE.
+forecast_mape_pct = Gauge("forecast_mape_pct", "Deprecated: Forecast RMSE")
 
 celery_task_duration_seconds = Histogram(
     "celery_task_duration_seconds",
@@ -37,4 +39,6 @@ def refresh_business_gauges() -> None:
 
     active_anomaly_alerts.set(AnomalyAlert.objects.filter(is_acknowledged=False).count())
     facilities_below_reorder.set(Facility.objects.filter(current_inventory__lte=F("dynamic_reorder_point")).count())
-    forecast_mape_pct.set(float(Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse"))["v"] or 0.0))
+    value = float(Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse"))["v"] or 0.0)
+    forecast_rmse.set(value)
+    forecast_mape_pct.set(value)

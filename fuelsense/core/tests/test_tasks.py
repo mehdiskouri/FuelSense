@@ -17,6 +17,25 @@ from fuelsense.core.tests.factories import (
 )
 
 
+def test_handle_remote_unavailable_requires_remote(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FUELSENSE_REQUIRE_REMOTE_SERVICES", "1")
+    with pytest.raises(RuntimeError):
+        tasks._handle_remote_unavailable("forecaster", "remote_disabled")
+
+
+def test_handle_remote_unavailable_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FUELSENSE_REQUIRE_REMOTE_SERVICES", "0")
+    seen: dict[str, object] = {}
+
+    def _warning(msg: str, **kwargs: object) -> None:
+        seen["msg"] = msg
+        seen["extra"] = kwargs.get("extra")
+
+    monkeypatch.setattr(tasks.logger, "warning", _warning)
+    tasks._handle_remote_unavailable("forecaster", "remote_disabled")
+    assert seen.get("msg") == "using fallback mode"
+
+
 @pytest.mark.django_db
 def test_tasks_execute_and_return_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
     facility = FacilityFactory()
