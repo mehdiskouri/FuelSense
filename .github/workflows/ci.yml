@@ -269,6 +269,8 @@ jobs:
           kubectl get events -n fuelsense --sort-by=.lastTimestamp | tail -n 200 || true
           for pod in $(kubectl get pods -n fuelsense -o name 2>/dev/null); do
             kubectl describe -n fuelsense "$pod" || true
+            kubectl logs -n fuelsense "$pod" --all-containers --tail=200 || true
+            kubectl logs -n fuelsense "$pod" --all-containers --previous --tail=200 || true
           done
       - name: Run Helm smoke tests
         if: success()
