@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from time import perf_counter
 
@@ -46,6 +47,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark route optimizer backend")
     parser.add_argument("--stops", type=int, default=50)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--output", choices=["csv", "json"], default="csv")
     args = parser.parse_args()
 
     os.environ["FUELSENSE_DEVICE"] = args.device
@@ -66,10 +68,26 @@ def main() -> None:
     )
     elapsed_ms = (perf_counter() - start) * 1000
 
+    payload = {
+        "backend": args.device,
+        "status": result["status"],
+        "stops": args.stops,
+        "vehicles_used": result["vehicles_used"],
+        "total_cost": round(float(result["total_cost"]), 2),
+        "baseline_cost": round(float(result["baseline_cost"]), 2),
+        "cost_reduction_pct": round(float(result["cost_reduction_pct"]), 2),
+        "elapsed_ms": round(elapsed_ms, 2),
+    }
+
+    if args.output == "json":
+        print(json.dumps(payload, separators=(",", ":")))
+        return
+
     print("backend,status,stops,vehicles_used,total_cost,baseline_cost,cost_reduction_pct,elapsed_ms")
     print(
-        f"{args.device},{result['status']},{args.stops},{result['vehicles_used']},"
-        f"{result['total_cost']:.2f},{result['baseline_cost']:.2f},{result['cost_reduction_pct']:.2f},{elapsed_ms:.2f}"
+        f"{payload['backend']},{payload['status']},{payload['stops']},{payload['vehicles_used']},"
+        f"{payload['total_cost']:.2f},{payload['baseline_cost']:.2f},"
+        f"{payload['cost_reduction_pct']:.2f},{payload['elapsed_ms']:.2f}"
     )
 
 

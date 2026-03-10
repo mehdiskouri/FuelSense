@@ -1,4 +1,13 @@
-name: CI
+name: CI/CD
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
 
 on:
   push:
@@ -80,7 +89,12 @@ jobs:
           POSTGRES_HOST: localhost
           POSTGRES_PORT: "5432"
         run: |
-          pytest fuelsense/ --cov=fuelsense --cov-fail-under=94 --cov-report=xml
+          pytest fuelsense/ --cov=fuelsense --cov-fail-under=95 --cov-report=xml:django-coverage.xml
+      - name: Upload Django coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: django-coverage
+          path: django-coverage.xml
 
   test-ml-services:
     runs-on: ubuntu-latest
@@ -97,18 +111,23 @@ jobs:
       - name: Run ML service tests
         run: |
           pytest -q \
+            --cov=fuelsense_common \
+            --cov=forecaster \
+            --cov=anomaly \
+            --cov=optimizer \
+            --cov=ml_pipeline \
+            --cov-fail-under=95 \
+            --cov-report=xml:ml-coverage.xml \
             fuelsense_common/tests \
-            forecaster/tests/test_service.py \
-            anomaly/tests/test_service.py \
-            anomaly/tests/test_detector.py \
-            optimizer/tests/test_service.py \
-            optimizer/tests/test_cpu_backend.py \
-            optimizer/tests/test_benchmark.py \
-            forecaster/tests/test_model.py \
-            forecaster/tests/test_cpu_backend.py \
-            ml_pipeline/tests/test_drift.py \
-            ml_pipeline/tests/test_training.py \
-            ml_pipeline/tests/test_anomaly_training.py
+            forecaster/tests \
+            anomaly/tests \
+            optimizer/tests \
+            ml_pipeline/tests
+      - name: Upload ML coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-coverage
+          path: ml-coverage.xml
 
   build-images:
     runs-on: ubuntu-latest
@@ -127,13 +146,40 @@ jobs:
             dockerfile: Dockerfile.optimizer
     steps:
       - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Validate compose manifests
         run: |
           docker compose -f docker-compose.yml config > /tmp/compose.out
           docker compose -f docker-compose.yml -f docker-compose.gpu.yml config > /tmp/compose-gpu.out
-      - name: Build image
-        run: |
-          docker build -f ${{ matrix.dockerfile }} -t fuelsense/${{ matrix.name }}:${{ github.sha }} .
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results-${{ matrix.name }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
 
   deploy-staging:
     if: github.ref == 'refs/heads/main'
@@ -141,34 +187,31 @@ jobs:
     needs: [build-images]
     steps:
       - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: engineerd/setup-kind@v0.6.2
       - uses: azure/setup-helm@v4
         with:
           version: v4.0.0
+      - name: Create cluster and preload images
+        run: |
+          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
+          for image in django forecaster anomaly optimizer; do
+            docker pull ${{ env.IMAGE_PREFIX }}/${image}:${{ github.sha }}
+            kind load docker-image ${{ env.IMAGE_PREFIX }}/${image}:${{ github.sha }} --name fuelsense-ci
+          done
       - name: Deploy with Helm
         run: |
-          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
           helm upgrade --install fuelsense charts/fuelsense \
             --namespace fuelsense \
             --create-namespace \
+            --set global.imageRegistry=${{ env.IMAGE_PREFIX }} \
             --set global.imageTag=${{ github.sha }} \
             --wait --timeout 300s
-
-  smoke-test:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    needs: [deploy-staging]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: engineerd/setup-kind@v0.6.2
-      - uses: azure/setup-helm@v4
-        with:
-          version: v4.0.0
-      - name: Run Helm smoke test
+      - name: Run Helm smoke tests
         run: |
-          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
-          helm upgrade --install fuelsense charts/fuelsense \
-            --namespace fuelsense \
-            --create-namespace \
-            --wait --timeout 300s
           helm test fuelsense -n fuelsense

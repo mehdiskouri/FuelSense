@@ -21,5 +21,66 @@ jobs:
         run: |
           docker build -f Dockerfile.forecaster-gpu -t fuelsense/forecaster-gpu:${{ github.sha }} .
           docker build -f Dockerfile.optimizer-gpu -t fuelsense/optimizer-gpu:${{ github.sha }} .
-      - name: Run GPU placeholder tests
-        run: echo "GPU tests activate when backend implementations land"
+      - name: Run forecaster GPU backend tests
+        run: pytest forecaster/tests/test_gpu_backend.py -v
+      - name: Run optimizer GPU backend tests
+        run: pytest optimizer/tests/test_gpu_backend.py -v
+      - name: Run CPU and CUDA benchmarks
+        run: |
+          mkdir -p artifacts
+          python -m forecaster.benchmark --facilities 50 --device cpu --output json > artifacts/forecaster_cpu.json
+          python -m forecaster.benchmark --facilities 50 --device cuda --output json > artifacts/forecaster_cuda.json
+          python -m optimizer.benchmark --stops 50 --device cpu --output json > artifacts/optimizer_cpu.json
+          python -m optimizer.benchmark --stops 50 --device cuda --output json > artifacts/optimizer_cuda.json
+      - name: Generate benchmark report
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          artifacts = Path("artifacts")
+
+          def read_json(path: Path):
+              return json.loads(path.read_text(encoding="utf-8"))
+
+          forecaster_cpu = read_json(artifacts / "forecaster_cpu.json")
+          forecaster_cuda = read_json(artifacts / "forecaster_cuda.json")
+          optimizer_cpu = read_json(artifacts / "optimizer_cpu.json")
+          optimizer_cuda = read_json(artifacts / "optimizer_cuda.json")
+
+          summary = {
+              "forecaster": {"cpu": forecaster_cpu, "cuda": forecaster_cuda},
+              "optimizer": {"cpu": optimizer_cpu, "cuda": optimizer_cuda},
+          }
+          (artifacts / "benchmark-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+          md = []
+          md.append("## GPU Benchmark Summary")
+          md.append("")
+          md.append("### Forecaster")
+          md.append("| Metric | CPU | CUDA |")
+          md.append("|---|---:|---:|")
+          md.append(f"| Predict ms | {forecaster_cpu['predict_ms']} | {forecaster_cuda['predict_ms']} |")
+          md.append(f"| Train epoch ms | {forecaster_cpu['train_epoch_ms']} | {forecaster_cuda['train_epoch_ms']} |")
+          md.append(f"| Validation RMSE | {forecaster_cpu['val_rmse']} | {forecaster_cuda['val_rmse']} |")
+          md.append("")
+          md.append("### Optimizer")
+          md.append("| Metric | CPU | CUDA |")
+          md.append("|---|---:|---:|")
+          md.append(f"| Status | {optimizer_cpu['status']} | {optimizer_cuda['status']} |")
+          md.append(f"| Vehicles used | {optimizer_cpu['vehicles_used']} | {optimizer_cuda['vehicles_used']} |")
+          md.append(f"| Total cost | {optimizer_cpu['total_cost']} | {optimizer_cuda['total_cost']} |")
+          md.append(f"| Cost reduction % | {optimizer_cpu['cost_reduction_pct']} | {optimizer_cuda['cost_reduction_pct']} |")
+          md.append(f"| Elapsed ms | {optimizer_cpu['elapsed_ms']} | {optimizer_cuda['elapsed_ms']} |")
+          (artifacts / "benchmark-summary.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+          PY
+          cat artifacts/benchmark-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-benchmarks
+          path: |
+            artifacts/benchmark-summary.json
+            artifacts/benchmark-summary.md
+            artifacts/*_cpu.json
+            artifacts/*_cuda.json

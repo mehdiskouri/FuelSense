@@ -4,11 +4,19 @@ import importlib
 from typing import Any, cast
 
 import pytest
+from django.core.cache import cache
 from django.test import Client
 
 from fuelsense.core import metrics
+from fuelsense.core.cache import (
+    _is_dashboard_kpis,
+    _to_float,
+    get_or_set_dashboard_kpis,
+    get_or_set_facility_inventory,
+    get_or_set_reorder_status,
+    invalidate_facility_cache,
+)
 from fuelsense.core.models import Facility
-from fuelsense.core.cache import get_or_set_dashboard_kpis, get_or_set_facility_inventory, get_or_set_reorder_status
 from fuelsense.core.tests.factories import (
     DeliveryItemFactory,
     DeliveryFactory,
@@ -95,6 +103,43 @@ def test_health_and_ready_endpoints() -> None:
     client = Client()
     assert client.get("/healthz").status_code == 200
     assert client.get("/readyz").status_code == 200
+
+
+@pytest.mark.django_db
+def test_cache_helper_branches(sample_facilities: list[Any]) -> None:
+    facility = cast(Facility, sample_facilities[0])
+    facility_id = cast(int, facility.pk)
+
+    # Direct helper branch coverage.
+    assert _to_float(None) == 0.0
+    assert _to_float(3) == 3.0
+    assert _is_dashboard_kpis("not-a-dict") is False
+    assert _is_dashboard_kpis({"avg_delivery_cost_last_30d": 1}) is False
+
+    # Cached-path coverage for facility helpers.
+    cache.set(f"cache:facility:{facility_id}:latest_inventory", 123.4, timeout=10)
+    assert get_or_set_facility_inventory(facility_id) == 123.4
+
+    cache.set(f"cache:facility:{facility_id}:reorder_status", "OK", timeout=10)
+    assert get_or_set_reorder_status(facility_id) == "OK"
+
+    # Cached dashboard KPI payload branch coverage.
+    kpi_payload = {
+        "avg_delivery_cost_last_30d": 1.0,
+        "forecast_accuracy_mape": 2.0,
+        "anomaly_detection_rate": 3.0,
+        "unacknowledged_anomalies_count": 4,
+        "facilities_below_reorder": 5,
+        "deliveries_in_transit": 6,
+    }
+    assert _is_dashboard_kpis(kpi_payload) is True
+    cache.set("cache:dashboard:kpis", kpi_payload, timeout=10)
+    cached_kpis = get_or_set_dashboard_kpis()
+    assert cached_kpis["deliveries_in_transit"] == 6
+
+    invalidate_facility_cache(facility_id)
+    assert cache.get(f"cache:facility:{facility_id}:latest_inventory") is None
+    assert cache.get(f"cache:facility:{facility_id}:reorder_status") is None
 
 
 def test_import_infra_modules() -> None:
