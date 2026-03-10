@@ -234,13 +234,16 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: engineerd/setup-kind@v0.6.2
+      - name: Setup kind
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: fuelsense-ci
+          config: infra/kind-config.yaml
       - uses: azure/setup-helm@v4
         with:
           version: v4.0.0
       - name: Create cluster and preload images
         run: |
-          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
           for image in django forecaster anomaly optimizer; do
             docker pull ${{ env.IMAGE_PREFIX }}/${image}:${{ github.sha }}
             kind load docker-image ${{ env.IMAGE_PREFIX }}/${image}:${{ github.sha }} --name fuelsense-ci
@@ -252,8 +255,22 @@ jobs:
             --create-namespace \
             --set global.imageRegistry=${{ env.IMAGE_PREFIX }} \
             --set global.imageTag=${{ github.sha }} \
-            --wait --timeout 300s
+            --set django.replicas=1 \
+            --set celery.default.replicas=1 \
+            --set celery.training.replicas=1 \
+            --set celery.planning.replicas=1 \
+            --set celery.beat.replicas=1 \
+            --wait --timeout 600s
+      - name: Collect Kubernetes diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -n fuelsense -o wide || true
+          kubectl get deployments -n fuelsense || true
+          kubectl get events -n fuelsense --sort-by=.lastTimestamp | tail -n 200 || true
+          for pod in $(kubectl get pods -n fuelsense -o name 2>/dev/null); do
+            kubectl describe -n fuelsense "$pod" || true
+          done
       - name: Run Helm smoke tests
-        if: always()
+        if: success()
         run: |
           helm test fuelsense -n fuelsense
