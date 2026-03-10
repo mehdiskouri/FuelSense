@@ -55,6 +55,9 @@ class CUDAForecaster(ComputeBackend):
 
         self.cuda_device = torch.device("cuda:0")
         self.stream = torch.cuda.Stream(device=self.cuda_device)
+        self.train_num_workers = int(
+            os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0))))
+        )
 
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -128,12 +131,14 @@ class CUDAForecaster(ComputeBackend):
             raise RuntimeError("Model is not initialized")
 
         np_in = np.asarray(lookback, dtype=np.float32)
-        cpu_tensor = torch.from_numpy(np_in).pin_memory()
+        cpu_tensor = torch.from_numpy(np_in)
+        if np_in.shape[0] > 1:
+            cpu_tensor = cpu_tensor.pin_memory()
 
         with torch.cuda.stream(self.stream), torch.no_grad(), _cuda_autocast():
             gpu_tensor = cpu_tensor.to(self.cuda_device, non_blocking=True)
             preds = self.model(gpu_tensor)
-            preds_cpu = preds.float().detach().cpu()
+            preds_cpu = preds.detach().cpu()
 
         self.stream.synchronize()
         return preds_cpu.numpy()
@@ -174,8 +179,8 @@ class CUDAForecaster(ComputeBackend):
             batch_size=batch_size,
             shuffle=True,
             pin_memory=True,
-            num_workers=2,
-            persistent_workers=True,
+            num_workers=max(self.train_num_workers, 0),
+            persistent_workers=self.train_num_workers > 0,
         )
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}

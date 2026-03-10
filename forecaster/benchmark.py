@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("--facilities", type=int, default=50)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--output", choices=["csv", "json"], default="csv")
+    parser.add_argument("--epochs", type=int, default=1)
     args = parser.parse_args()
 
     # Import backend modules lazily to ensure registry side effects are applied.
@@ -50,10 +51,15 @@ def main() -> None:
     rng = np.random.default_rng(42)
     n = max(args.facilities, 2)
     x = rng.normal(size=(n, 90, 6)).astype(np.float32)
-    y = rng.normal(size=(n,)).astype(np.float32)
+    y = rng.normal(size=(n, 14)).astype(np.float32)
 
     backend = cast(ForecasterBackend, get_backend("demand_forecaster", device))
     backend.warmup()
+
+    if device == DeviceType.CUDA:
+        import torch
+
+        torch.cuda.reset_peak_memory_stats()
 
     start = perf_counter()
     _ = backend.predict(x)
@@ -65,8 +71,8 @@ def main() -> None:
         train_targets=y[: n // 2],
         val_data=x[n // 2 :],
         val_targets=y[n // 2 :],
-        epochs=1,
-        batch_size=min(32, n),
+        epochs=max(args.epochs, 1),
+        batch_size=min(256 if device == DeviceType.CUDA else 32, n),
     )
     train_ms = (perf_counter() - train_start) * 1000
 
@@ -77,6 +83,11 @@ def main() -> None:
         "train_epoch_ms": round(train_ms, 2),
         "val_rmse": round(float(result.get("validation_rmse", 0.0)), 4),
     }
+
+    if device == DeviceType.CUDA:
+        import torch
+
+        payload["peak_gpu_mem_gb"] = round(float(torch.cuda.max_memory_allocated() / (1024**3)), 4)
 
     if args.output == "json":
         print(json.dumps(payload, separators=(",", ":")))

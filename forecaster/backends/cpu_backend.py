@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import copy
+import os
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -26,6 +26,9 @@ class CPUForecaster(ComputeBackend):
     def __init__(self) -> None:
         torch.set_num_threads(4)
         torch.set_float32_matmul_precision("medium")
+        self.train_num_workers = int(
+            os.environ.get("FUELSENSE_FORECAST_CPU_WORKERS", str(min(4, max((os.cpu_count() or 1) - 1, 0))))
+        )
         self.model: DemandTCN | None = DemandTCN()
         self.model.eval()
         self.loss_fn = QuantileLoss()
@@ -90,7 +93,13 @@ class CPUForecaster(ComputeBackend):
         val_y = torch.as_tensor(val_targets, dtype=torch.float32)
 
         train_ds = TensorDataset(train_x, train_y)
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=max(self.train_num_workers, 0),
+            persistent_workers=self.train_num_workers > 0,
+        )
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
         best_val = float("inf")
@@ -123,7 +132,7 @@ class CPUForecaster(ComputeBackend):
 
             if val_loss < best_val:
                 best_val = val_loss
-                best_state = copy.deepcopy(model.state_dict())
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
                 stale_epochs = 0
             else:
                 stale_epochs += 1
@@ -155,7 +164,7 @@ class CPUForecaster(ComputeBackend):
 
         return {
             "history": history,
-            "best_state_dict": copy.deepcopy(self.model.state_dict()),
+            "best_state_dict": {k: v.detach().clone() for k, v in self.model.state_dict().items()},
             "best_val_loss": best_val,
             "epochs_trained": len(history["val_loss"]),
             "training_rmse": train_rmse,
