@@ -18,7 +18,7 @@ spec:
       containers:
         - name: worker-planning
           image: {{ include "fuelsense.image" (dict "Values" .Values "image" .Values.django.image) }}
-          command: ["celery", "-A", "fuelsense", "worker", "-Q", "planning", "--loglevel=info", "-c", "{{ .Values.celery.planning.concurrency }}"]
+          command: ["celery", "-A", "fuelsense.celery:app", "worker", "-Q", "planning", "--loglevel=info", "-c", "{{ .Values.celery.planning.concurrency }}"]
           envFrom:
             - configMapRef:
                 name: {{ include "fuelsense.fullname" . }}-config
@@ -26,7 +26,7 @@ spec:
                 name: {{ include "fuelsense.fullname" . }}-secret
           livenessProbe:
             exec:
-              command: ["sh", "-c", "celery -A fuelsense inspect ping -d celery@$(hostname) | grep -q pong"]
+              command: ["sh", "-c", "celery -A fuelsense.celery:app inspect ping -d celery@$(hostname) | grep -q pong"]
             initialDelaySeconds: 30
             periodSeconds: 30
           resources:

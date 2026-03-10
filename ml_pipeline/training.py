@@ -69,9 +69,7 @@ class ForecastTrainer:
                 return
             if y.ndim == 2 and y.shape == (x.shape[0], DemandTCN.HORIZON):
                 return
-            raise ValueError(
-                f"{name}_targets must have shape [N] or [N, {DemandTCN.HORIZON}], got {y.shape}"
-            )
+            raise ValueError(f"{name}_targets must have shape [N] or [N, {DemandTCN.HORIZON}], got {y.shape}")
 
         def _expand_targets(y: np.ndarray) -> np.ndarray:
             if y.ndim == 1:

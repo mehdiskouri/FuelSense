@@ -8,6 +8,7 @@ from fuelsense.core.models import Facility, InventoryLog
 from fuelsense.core.tests.factories import (
     AnomalyAlertFactory,
     DeliveryFactory,
+    DepotFacilityAssignmentFactory,
     DepotFactory,
     FacilityFactory,
     ForecastFactory,
@@ -75,3 +76,14 @@ def test_facility_indexes_declared():
     index_fields = [tuple(idx.fields) for idx in Facility._meta.indexes]
     assert ("fuel_type", "is_active") in index_fields
     assert ("current_inventory",) in index_fields
+
+
+@pytest.mark.django_db
+def test_model_string_representations_cover_expected_formats() -> None:
+    assignment = DepotFacilityAssignmentFactory()
+    forecast = ForecastFactory(facility=assignment.facility, model_version="v-test")
+    alert = AnomalyAlertFactory(facility=assignment.facility)
+
+    assert str(assignment) == f"{assignment.depot} -> {assignment.facility}"
+    assert str(forecast) == f"Forecast {forecast.facility_id} vv-test"
+    assert str(alert) == f"{alert.anomaly_type} @ facility {alert.facility_id}"

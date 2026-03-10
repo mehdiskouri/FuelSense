@@ -66,6 +66,8 @@ def test_retrain_integration_promotes_with_windowed_dataset(monkeypatch: pytest.
     existing.refresh_from_db()
     assert existing.is_active is False
 
-    promoted = ModelRegistry.objects.get(facility=facility, model_type=ModelRegistry.ModelType.DEMAND_FORECAST, is_active=True)
-    assert float(getattr(promoted, "training_rmse")) == 0.95
-    assert float(getattr(promoted, "validation_rmse")) == 1.1
+    promoted = ModelRegistry.objects.get(
+        facility=facility, model_type=ModelRegistry.ModelType.DEMAND_FORECAST, is_active=True
+    )
+    assert float(promoted.training_rmse) == 0.95
+    assert float(promoted.validation_rmse) == 1.1

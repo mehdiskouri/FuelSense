@@ -18,7 +18,7 @@ spec:
       containers:
         - name: beat
           image: {{ include "fuelsense.image" (dict "Values" .Values "image" .Values.django.image) }}
-          command: ["celery", "-A", "fuelsense", "beat", "--loglevel=info"]
+          command: ["celery", "-A", "fuelsense.celery:app", "beat", "--loglevel=info"]
           envFrom:
             - configMapRef:
                 name: {{ include "fuelsense.fullname" . }}-config

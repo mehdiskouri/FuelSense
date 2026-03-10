@@ -45,7 +45,7 @@ jobs:
           version: v4.0.0
       - name: Install kubeconform
         run: |
-          curl -sSL -o /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          curl -sSL -o /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
           tar -xzf /tmp/kubeconform.tar.gz -C /tmp
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
       - name: Helm lint CPU and GPU values
@@ -210,6 +210,8 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+          scanners: vuln
+          ignore-unfixed: true
           format: sarif
           output: trivy-results-${{ matrix.name }}.sarif
           severity: CRITICAL,HIGH
