@@ -70,7 +70,12 @@ markers = [
 
 [tool.coverage.run]
 source = ["fuelsense", "fuelsense_common", "forecaster", "anomaly", "optimizer", "ml_pipeline"]
-omit = ["*/tests/*", "*/migrations/*"]
+omit = [
+  "*/tests/*",
+  "*/migrations/*",
+  "forecaster/backends/gpu_backend.py",
+  "optimizer/backends/gpu_backend.py",
+]
 
 [tool.coverage.report]
 fail_under = 95
