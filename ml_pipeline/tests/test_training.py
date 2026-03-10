@@ -16,13 +16,15 @@ class _MockBackend:
             "best_state_dict": __import__("forecaster.model", fromlist=["DemandTCN"]).DemandTCN().state_dict(),
             "best_val_loss": 0.9,
             "epochs_trained": 2,
+            "training_rmse": 0.75,
+            "validation_rmse": 0.82,
         }
 
 
 def _dataset() -> dict[str, np.ndarray]:
     rng = np.random.default_rng(123)
     x = rng.normal(size=(20, 90, 6)).astype(np.float32)
-    y = rng.normal(size=(20,)).astype(np.float32)
+    y = rng.normal(size=(20, 14)).astype(np.float32)
     return {
         "train_data": x[:10],
         "train_targets": y[:10],
@@ -97,6 +99,8 @@ def test_train_and_register_logs_and_returns(monkeypatch: Any, tmp_path: Any) ->
     )
 
     assert result["run_id"] == "run-123"
+    assert result["training_rmse"] == 0.75
+    assert result["validation_rmse"] == 0.82
     assert logged_params["facility_id"] == 42
     assert any("train_loss" in item for item in logged_metrics)
     assert "data_hash" in logged_tags

@@ -36,6 +36,18 @@ def test_check_drift_insufficient_samples() -> None:
     assert result["reason"] == "insufficient_samples"
 
 
+def test_check_drift_invalid_baseline() -> None:
+    monitor = DriftMonitor()
+    result = monitor.check_drift(
+        facility_id=4,
+        baseline_rmse=0.0,
+        recent_actuals=[10, 11, 12, 13, 14, 15],
+        recent_predictions=[9, 10, 11, 12, 13, 14],
+    )
+    assert result["needs_retrain"] is False
+    assert result["reason"] == "baseline_invalid"
+
+
 def test_check_all_facilities_summary() -> None:
     monitor = DriftMonitor()
     summary = monitor.check_all_facilities(

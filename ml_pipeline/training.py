@@ -58,6 +58,32 @@ class ForecastTrainer:
         test_data: np.ndarray,
         test_targets: np.ndarray,
     ) -> dict[str, Any]:
+        def _validate_arrays(x: np.ndarray, y: np.ndarray, name: str) -> None:
+            if x.ndim != 3 or x.shape[1:] != (DemandTCN.LOOKBACK, DemandTCN.N_FEATURES):
+                raise ValueError(
+                    f"{name}_data must have shape [N, {DemandTCN.LOOKBACK}, {DemandTCN.N_FEATURES}], got {x.shape}"
+                )
+            if y.ndim == 1:
+                if y.shape[0] != x.shape[0]:
+                    raise ValueError(f"{name}_targets length must match {name}_data batch")
+                return
+            if y.ndim == 2 and y.shape == (x.shape[0], DemandTCN.HORIZON):
+                return
+            raise ValueError(
+                f"{name}_targets must have shape [N] or [N, {DemandTCN.HORIZON}], got {y.shape}"
+            )
+
+        def _expand_targets(y: np.ndarray) -> np.ndarray:
+            if y.ndim == 1:
+                return np.repeat(y[:, None], DemandTCN.HORIZON, axis=1)
+            return y
+
+        _validate_arrays(train_data, train_targets, "train")
+        _validate_arrays(val_data, val_targets, "val")
+        _validate_arrays(test_data, test_targets, "test")
+        if train_data.shape[0] == 0:
+            raise ValueError("train_data is empty")
+
         run_name = f"facility_{facility_id}" if facility_id is not None else "global"
         device = resolve_device()
         backend = get_backend("demand_forecaster", device)
@@ -83,8 +109,8 @@ class ForecastTrainer:
         with torch.no_grad():
             test_x = torch.as_tensor(test_data, dtype=torch.float32)
             preds = model_for_eval(test_x)
-            p50 = preds[:, :, 1].mean(dim=1).detach().cpu().numpy()
-            y_true = np.asarray(test_targets, dtype=np.float32)
+            p50 = preds[:, :, 1].detach().cpu().numpy()
+            y_true = _expand_targets(np.asarray(test_targets, dtype=np.float32))
             mse = float(np.asarray(np.mean((p50 - y_true) ** 2) if y_true.size else 0.0, dtype=np.float64).item())
             test_rmse = float(np.sqrt(max(mse, 0.0)))
             denom = np.clip(np.abs(y_true), a_min=1e-6, a_max=None)
@@ -93,6 +119,9 @@ class ForecastTrainer:
                     np.mean(np.abs((p50 - y_true) / denom)) * 100 if y_true.size else 0.0, dtype=np.float64
                 ).item()
             )
+
+        validation_rmse = float(train_result.get("validation_rmse", test_rmse))
+        training_rmse = float(train_result.get("training_rmse", validation_rmse))
 
         with mlflow.start_run(run_name=run_name) as run:
             params: dict[str, str | int | float] = {
@@ -132,6 +161,8 @@ class ForecastTrainer:
                 {
                     "test_rmse": test_rmse,
                     "test_mape": test_mape,
+                    "training_rmse": training_rmse,
+                    "validation_rmse": validation_rmse,
                     "best_val_loss": float(train_result.get("best_val_loss", 0.0)),
                     "epochs_trained": float(train_result.get("epochs_trained", 0)),
                 }
@@ -165,6 +196,8 @@ class ForecastTrainer:
             if facility_id is not None
             else "demand-forecaster-global",
             "device": device.value,
+            "training_rmse": training_rmse,
+            "validation_rmse": validation_rmse,
             "test_rmse": test_rmse,
             "test_mape": test_mape,
             "best_val_loss": float(train_result.get("best_val_loss", 0.0)),

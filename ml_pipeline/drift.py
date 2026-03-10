@@ -52,14 +52,26 @@ class DriftMonitor:
                 "max_absolute_error": 0.0,
             }
 
+        if baseline_rmse <= 0:
+            return {
+                "facility_id": facility_id,
+                "needs_retrain": False,
+                "reason": "baseline_invalid",
+                "sample_count": sample_count,
+                "drift_ratio": 1.0,
+                "residual_mean": 0.0,
+                "residual_std": 0.0,
+                "residual_autocorrelation": 0.0,
+                "max_absolute_error": 0.0,
+            }
+
         actual = np.asarray(recent_actuals[:sample_count], dtype=np.float64)
         pred = np.asarray(recent_predictions[:sample_count], dtype=np.float64)
         residuals = actual - pred
         mse = float(np.mean(np.square(residuals)))
         recent_rmse = sqrt(max(mse, 0.0))
 
-        baseline = baseline_rmse if baseline_rmse > 0 else 1e-6
-        drift_ratio = recent_rmse / baseline
+        drift_ratio = recent_rmse / baseline_rmse
 
         residual_std = float(np.std(residuals))
         if sample_count > 1:

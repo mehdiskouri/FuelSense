@@ -58,6 +58,16 @@ async def test_predict_rejects_invalid_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_predict_rejects_non_finite_payload() -> None:
+    bad = _valid_lookback()
+    bad[0][0] = "nan"
+    transport = ASGITransport(app=service.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/predict", json={"facility_id": 1, "lookback": bad})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_predict_batch_contract() -> None:
     class MockBackend:
         device = service.DeviceType.CPU
@@ -112,6 +122,36 @@ async def test_predict_batch_empty_requests_returns_200() -> None:
         response = await client.post("/predict/batch", json={"requests": []})
     assert response.status_code == 200
     assert response.json()["responses"] == []
+
+
+@pytest.mark.asyncio
+async def test_predict_batch_rejects_non_finite_payload() -> None:
+    class MockBackend:
+        device = service.DeviceType.CPU
+
+        def warmup(self) -> None:
+            return None
+
+        def health_check(self) -> dict[str, object]:
+            return {"status": "ok", "model_loaded": True}
+
+        def predict(self, lookback: Any) -> list[list[list[float]]]:
+            batch_size = int(lookback.shape[0])
+            return [[[10.0, 12.0, 14.0] for _ in range(14)] for _ in range(batch_size)]
+
+    service.backend = MockBackend()
+    service.device_type = service.DeviceType.CPU
+    bad = _valid_lookback()
+    bad[1][1] = "inf"
+    payload = {
+        "requests": [
+            {"facility_id": 1, "lookback": bad},
+        ]
+    }
+    transport = ASGITransport(app=service.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/predict/batch", json=payload)
+    assert response.status_code == 422
 
 
 def test_coerce_predictions_rejects_invalid_shape() -> None:

@@ -59,3 +59,20 @@ def test_cpu_backend_train_converges_smoke() -> None:
     history = result["history"]
     assert len(history["val_loss"]) >= 2
     assert history["val_loss"][-1] <= history["val_loss"][0] or min(history["val_loss"]) < history["val_loss"][0]
+
+
+def test_cpu_backend_train_accepts_horizon_targets() -> None:
+    backend = CPUForecaster()
+    x, _ = _synthetic_data(96)
+    rng = np.random.default_rng(99)
+    y = rng.normal(size=(96, 14)).astype(np.float32)
+    result = backend.train(
+        train_data=x[:72],
+        train_targets=y[:72],
+        val_data=x[72:],
+        val_targets=y[72:],
+        epochs=2,
+        batch_size=16,
+        patience=2,
+    )
+    assert result["epochs_trained"] >= 1

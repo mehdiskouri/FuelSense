@@ -169,7 +169,7 @@ class ModelRegistrySerializer(serializers.ModelSerializer):
 
 class DashboardKPISerializer(serializers.Serializer):
     avg_delivery_cost_last_30d = serializers.FloatField()
-    forecast_accuracy_mape = serializers.FloatField()
+    forecast_accuracy_rmse = serializers.FloatField()
     anomaly_detection_rate = serializers.FloatField()
     unacknowledged_anomalies_count = serializers.IntegerField()
     facilities_below_reorder = serializers.IntegerField()

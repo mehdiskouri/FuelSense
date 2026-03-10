@@ -126,7 +126,7 @@ def test_cache_helper_branches(sample_facilities: list[Any]) -> None:
     # Cached dashboard KPI payload branch coverage.
     kpi_payload = {
         "avg_delivery_cost_last_30d": 1.0,
-        "forecast_accuracy_mape": 2.0,
+        "forecast_accuracy_rmse": 2.0,
         "anomaly_detection_rate": 3.0,
         "unacknowledged_anomalies_count": 4,
         "facilities_below_reorder": 5,

@@ -406,7 +406,8 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
     previous_rmse = (
         float(current_active.validation_rmse) if current_active and current_active.validation_rmse else float("inf")
     )
-    improved = float(result["test_rmse"]) < previous_rmse
+    candidate_validation_rmse = float(result.get("validation_rmse", result["test_rmse"]))
+    improved = candidate_validation_rmse < previous_rmse
 
     if improved:
         ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id, is_active=True).update(
@@ -425,8 +426,8 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
             version=int(max_version) + 1,
             is_active=True,
             trained_at=timezone.now(),
-            training_rmse=float(result["test_rmse"]),
-            validation_rmse=float(result["test_rmse"]),
+            training_rmse=float(result.get("training_rmse", candidate_validation_rmse)),
+            validation_rmse=candidate_validation_rmse,
             drift_ratio=1.0,
             last_drift_check=timezone.now(),
         )

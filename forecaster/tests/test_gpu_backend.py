@@ -50,6 +50,23 @@ def test_gpu_backend_train_smoke() -> None:
     assert result["epochs_trained"] >= 1
 
 
+def test_gpu_backend_train_accepts_horizon_targets() -> None:
+    backend = CUDAForecaster()
+    x, _ = _synthetic_data(36)
+    rng = np.random.default_rng(123)
+    y = rng.normal(size=(36, 14)).astype(np.float32)
+    result = backend.train(
+        train_data=x[:28],
+        train_targets=y[:28],
+        val_data=x[28:],
+        val_targets=y[28:],
+        epochs=2,
+        batch_size=8,
+        patience=2,
+    )
+    assert result["epochs_trained"] >= 1
+
+
 def test_gpu_backend_init_raises_without_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("forecaster.backends.gpu_backend.torch.cuda.is_available", lambda: False)
     with pytest.raises(RuntimeError):
