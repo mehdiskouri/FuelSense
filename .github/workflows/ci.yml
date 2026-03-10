@@ -204,7 +204,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           load: true
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline') }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@master
@@ -223,7 +223,7 @@ jobs:
           category: trivy-${{ matrix.name }}
 
   deploy-staging:
-    if: always() && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')
     runs-on: ubuntu-latest
     needs: [build-images]
     steps:
