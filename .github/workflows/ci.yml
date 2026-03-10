@@ -2,7 +2,7 @@ name: CI/CD
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+  IMAGE_PREFIX: ghcr.io/mehdiskouri/fuelsense
 
 permissions:
   contents: read
