@@ -34,7 +34,6 @@ from fuelsense.core.models import (
 )
 from fuelsense.core.routing import build_optimizer_request
 from ml_pipeline.drift import DriftMonitor
-from ml_pipeline.training import ForecastTrainer
 
 logger = logging.getLogger(__name__)
 
@@ -393,6 +392,8 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
     if model_type != "DEMAND_FORECAST":
         logger.info("retrain_model skipped for unsupported model type", extra={"model_type": model_type})
         return {"facility_id": facility_id, "model_type": model_type, "status": "skipped"}
+
+    from ml_pipeline.training import ForecastTrainer
 
     dataset = extract_training_data(facility_id)
     trainer = ForecastTrainer()
