@@ -222,7 +222,7 @@ class DashboardViewSet(viewsets.ViewSet):
 
         payload = {
             "avg_delivery_cost_last_30d": float(avg_delivery_cost),
-            "forecast_accuracy_mape": float(avg_rmse),
+            "forecast_accuracy_rmse": float(avg_rmse),
             "anomaly_detection_rate": float(total_alerts / max(InventoryLog.objects.count(), 1)),
             "unacknowledged_anomalies_count": int(unack),
             "facilities_below_reorder": int(below_reorder),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import copy
+import os
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -26,6 +26,9 @@ class CPUForecaster(ComputeBackend):
     def __init__(self) -> None:
         torch.set_num_threads(4)
         torch.set_float32_matmul_precision("medium")
+        self.train_num_workers = int(
+            os.environ.get("FUELSENSE_FORECAST_CPU_WORKERS", str(min(4, max((os.cpu_count() or 1) - 1, 0))))
+        )
         self.model: DemandTCN | None = DemandTCN()
         self.model.eval()
         self.loss_fn = QuantileLoss()
@@ -72,6 +75,13 @@ class CPUForecaster(ComputeBackend):
         weight_decay: float = 1e-4,
         patience: int = 10,
     ) -> dict[str, Any]:
+        def _expand_targets(raw: Tensor) -> Tensor:
+            if raw.ndim == 1:
+                return raw.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+            if raw.ndim == 2 and raw.shape[1] == DemandTCN.HORIZON:
+                return raw
+            raise ValueError("targets must have shape [N] or [N, HORIZON]")
+
         model = DemandTCN()
         optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         optimizer_any: Any = optimizer
@@ -83,7 +93,13 @@ class CPUForecaster(ComputeBackend):
         val_y = torch.as_tensor(val_targets, dtype=torch.float32)
 
         train_ds = TensorDataset(train_x, train_y)
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=max(self.train_num_workers, 0),
+            persistent_workers=self.train_num_workers > 0,
+        )
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
         best_val = float("inf")
@@ -96,7 +112,7 @@ class CPUForecaster(ComputeBackend):
             for batch_x, batch_y in train_loader:
                 optimizer.zero_grad(set_to_none=True)
                 preds = model(batch_x)
-                target = batch_y.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+                target = _expand_targets(batch_y)
                 loss = self.loss_fn(preds, target)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -106,7 +122,7 @@ class CPUForecaster(ComputeBackend):
             model.eval()
             with torch.no_grad():
                 val_preds = model(val_x)
-                val_target = val_y.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+                val_target = _expand_targets(val_y)
                 val_loss = float(self.loss_fn(val_preds, val_target).detach().cpu().item())
 
             epoch_train = float(np.mean(train_losses)) if train_losses else val_loss
@@ -116,7 +132,7 @@ class CPUForecaster(ComputeBackend):
 
             if val_loss < best_val:
                 best_val = val_loss
-                best_state = copy.deepcopy(model.state_dict())
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
                 stale_epochs = 0
             else:
                 stale_epochs += 1
@@ -134,14 +150,24 @@ class CPUForecaster(ComputeBackend):
             start = perf_counter()
             pred = self.model(val_x)
             inference_ms = (perf_counter() - start) * 1000
-            pred_p50 = pred[:, :, 1].mean(dim=1)
-            rmse = float(torch.sqrt(torch.mean((pred_p50 - val_y) ** 2)).item())
+            pred_p50 = pred[:, :, 1]
+            val_target = _expand_targets(val_y)
+            rmse = float(torch.sqrt(torch.mean((pred_p50 - val_target) ** 2)).item())
+
+        train_rmse = 0.0
+        if train_x.shape[0] > 0:
+            with torch.no_grad():
+                train_pred = self.model(train_x)
+                train_p50 = train_pred[:, :, 1]
+                train_target = _expand_targets(train_y)
+                train_rmse = float(torch.sqrt(torch.mean((train_p50 - train_target) ** 2)).item())
 
         return {
             "history": history,
-            "best_state_dict": copy.deepcopy(self.model.state_dict()),
+            "best_state_dict": {k: v.detach().clone() for k, v in self.model.state_dict().items()},
             "best_val_loss": best_val,
             "epochs_trained": len(history["val_loss"]),
+            "training_rmse": train_rmse,
             "validation_rmse": rmse,
             "validation_inference_time_ms": inference_ms,
         }

@@ -14,7 +14,7 @@ from fuelsense.core.models import Facility
 
 class DashboardKpis(TypedDict):
     avg_delivery_cost_last_30d: float
-    forecast_accuracy_mape: float
+    forecast_accuracy_rmse: float
     anomaly_detection_rate: float
     unacknowledged_anomalies_count: int
     facilities_below_reorder: int
@@ -33,7 +33,7 @@ def _is_dashboard_kpis(payload: object) -> bool:
     typed_payload = cast(dict[str, object], payload)
     expected_keys = {
         "avg_delivery_cost_last_30d",
-        "forecast_accuracy_mape",
+        "forecast_accuracy_rmse",
         "anomaly_detection_rate",
         "unacknowledged_anomalies_count",
         "facilities_below_reorder",
@@ -74,7 +74,7 @@ def get_or_set_dashboard_kpis() -> DashboardKpis:
     if _is_dashboard_kpis(cached):
         return DashboardKpis(
             avg_delivery_cost_last_30d=_to_float(cached.get("avg_delivery_cost_last_30d")),
-            forecast_accuracy_mape=_to_float(cached.get("forecast_accuracy_mape")),
+            forecast_accuracy_rmse=_to_float(cached.get("forecast_accuracy_rmse")),
             anomaly_detection_rate=_to_float(cached.get("anomaly_detection_rate")),
             unacknowledged_anomalies_count=int(cached.get("unacknowledged_anomalies_count", 0)),
             facilities_below_reorder=int(cached.get("facilities_below_reorder", 0)),
@@ -87,7 +87,7 @@ def get_or_set_dashboard_kpis() -> DashboardKpis:
         "avg_delivery_cost_last_30d": _to_float(
             Delivery.objects.exclude(total_cost__isnull=True).aggregate(v=Avg("total_cost")).get("v")
         ),
-        "forecast_accuracy_mape": _to_float(
+        "forecast_accuracy_rmse": _to_float(
             Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse")).get("v")
         ),
         "anomaly_detection_rate": float(AnomalyAlert.objects.count() / max(InventoryLog.objects.count(), 1)),

@@ -22,7 +22,7 @@ jobs:
           docker build -f Dockerfile.forecaster-gpu -t fuelsense/forecaster-gpu:${{ github.sha }} .
           docker build -f Dockerfile.optimizer-gpu -t fuelsense/optimizer-gpu:${{ github.sha }} .
       - name: Run forecaster GPU backend tests
-        run: pytest forecaster/tests/test_gpu_backend.py -v
+        run: pytest forecaster/tests/test_gpu_backend.py forecaster/tests/test_backend_parity.py -v
       - name: Run optimizer GPU backend tests
         run: pytest optimizer/tests/test_gpu_backend.py -v
       - name: Run CPU and CUDA benchmarks
@@ -32,6 +32,52 @@ jobs:
           python -m forecaster.benchmark --facilities 50 --device cuda --output json > artifacts/forecaster_cuda.json
           python -m optimizer.benchmark --stops 50 --device cpu --output json > artifacts/optimizer_cpu.json
           python -m optimizer.benchmark --stops 50 --device cuda --output json > artifacts/optimizer_cuda.json
+      - name: Validate benchmark JSON schema
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          artifacts = Path("artifacts")
+          required_forecaster = {"backend", "facilities", "predict_ms", "train_epoch_ms", "val_rmse"}
+          required_optimizer = {
+            "backend",
+            "status",
+            "stops",
+            "vehicles_used",
+            "total_cost",
+            "baseline_cost",
+            "cost_reduction_pct",
+            "elapsed_ms",
+          }
+
+          def load(path: str):
+            data = json.loads((artifacts / path).read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+              raise SystemExit(f"{path} is not a JSON object")
+            return data
+
+          forecaster_cpu = load("forecaster_cpu.json")
+          forecaster_cuda = load("forecaster_cuda.json")
+          optimizer_cpu = load("optimizer_cpu.json")
+          optimizer_cuda = load("optimizer_cuda.json")
+
+          for name, payload in {
+            "forecaster_cpu": forecaster_cpu,
+            "forecaster_cuda": forecaster_cuda,
+          }.items():
+            missing = required_forecaster - set(payload.keys())
+            if missing:
+              raise SystemExit(f"{name} missing keys: {sorted(missing)}")
+
+          for name, payload in {
+            "optimizer_cpu": optimizer_cpu,
+            "optimizer_cuda": optimizer_cuda,
+          }.items():
+            missing = required_optimizer - set(payload.keys())
+            if missing:
+              raise SystemExit(f"{name} missing keys: {sorted(missing)}")
+          PY
       - name: Generate benchmark report
         run: |
           python - <<'PY'

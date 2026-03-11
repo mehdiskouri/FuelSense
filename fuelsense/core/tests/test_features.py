@@ -43,8 +43,8 @@ def test_build_lookback_matrix_shape_and_dow_features(sample_facilities: list[ob
 @pytest.mark.django_db
 def test_extract_training_data_temporal_split(sample_facilities: list[object]) -> None:
     facility = sample_facilities[0]
-    base = timezone.now() - timedelta(days=70)
-    for i in range(60):
+    base = timezone.now() - timedelta(days=220)
+    for i in range(170):
         InventoryLogFactory(
             facility=facility,
             timestamp=base + timedelta(days=i),
@@ -55,9 +55,12 @@ def test_extract_training_data_temporal_split(sample_facilities: list[object]) -
         )
 
     data = extract_training_data(int(facility.id))
+    assert data["test_data"].ndim == 3
+    assert data["test_data"].shape[1:] == (90, 6)
+    assert data["test_targets"].shape[1] == 14
     assert data["test_data"].shape[0] == 14
     assert data["val_data"].shape[0] == 14
-    assert data["train_data"].shape[0] == 32
+    assert data["train_data"].shape[0] == 39
 
 
 @pytest.mark.django_db

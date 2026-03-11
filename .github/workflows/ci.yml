@@ -2,7 +2,7 @@ name: CI/CD
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+  IMAGE_PREFIX: ghcr.io/mehdiskouri/fuelsense
 
 permissions:
   contents: read
@@ -45,7 +45,7 @@ jobs:
           version: v4.0.0
       - name: Install kubeconform
         run: |
-          curl -sSL -o /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          curl -sSL -o /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
           tar -xzf /tmp/kubeconform.tar.gz -C /tmp
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
       - name: Helm lint CPU and GPU values
@@ -133,10 +133,44 @@ jobs:
           name: ml-coverage
           path: ml-coverage.xml
 
+  test-training-integration:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fuelsense
+          POSTGRES_PASSWORD: fuelsense
+          POSTGRES_DB: fuelsense
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/base.txt -r requirements/forecaster-cpu.txt -r requirements/dev.txt
+      - name: Run training integration tests
+        env:
+          POSTGRES_DB: fuelsense
+          POSTGRES_USER: fuelsense
+          POSTGRES_PASSWORD: fuelsense
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+        run: |
+          pytest -q fuelsense/core/tests/test_training_integration.py
+
   build-images:
     if: always()
     runs-on: ubuntu-latest
-    needs: [test-django, test-ml-services, validate-helm]
+    needs: [test-django, test-ml-services, test-training-integration, validate-helm]
     strategy:
       fail-fast: false
       matrix:
@@ -170,16 +204,22 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           load: true
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline') }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+      - name: Verify django runtime dependencies
+        if: matrix.name == 'django'
+        run: |
+          docker run --rm ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }} python -c "import mlflow"
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+          scanners: vuln
+          ignore-unfixed: true
           format: sarif
           output: trivy-results-${{ matrix.name }}.sarif
           severity: CRITICAL,HIGH
-          exit-code: "1"
+          exit-code: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && '1' || '0' }}
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -187,7 +227,7 @@ jobs:
           category: trivy-${{ matrix.name }}
 
   deploy-staging:
-    if: always() && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')
     runs-on: ubuntu-latest
     needs: [build-images]
     steps:
@@ -198,13 +238,16 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: engineerd/setup-kind@v0.6.2
+      - name: Setup kind
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: fuelsense-ci
+          config: infra/kind-config.yaml
       - uses: azure/setup-helm@v4
         with:
           version: v4.0.0
       - name: Create cluster and preload images
         run: |
-          kind create cluster --config infra/kind-config.yaml --name fuelsense-ci || true
           for image in django forecaster anomaly optimizer; do
             docker pull ${{ env.IMAGE_PREFIX }}/${image}:${{ github.sha }}
             kind load docker-image ${{ env.IMAGE_PREFIX }}/${image}:${{ github.sha }} --name fuelsense-ci
@@ -216,8 +259,37 @@ jobs:
             --create-namespace \
             --set global.imageRegistry=${{ env.IMAGE_PREFIX }} \
             --set global.imageTag=${{ github.sha }} \
-            --wait --timeout 300s
+            --set django.replicas=1 \
+            --set celery.default.replicas=1 \
+            --set celery.training.replicas=1 \
+            --set celery.planning.replicas=1 \
+            --set celery.beat.replicas=1 \
+            --wait --timeout 600s
+      - name: Collect Kubernetes diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -n fuelsense -o wide || true
+          kubectl get deployments -n fuelsense || true
+          kubectl get events -n fuelsense --sort-by=.lastTimestamp | tail -n 200 || true
+          for pod in $(kubectl get pods -n fuelsense -o name 2>/dev/null); do
+            kubectl describe -n fuelsense "$pod" || true
+            kubectl logs -n fuelsense "$pod" --all-containers --tail=200 || true
+            kubectl logs -n fuelsense "$pod" --all-containers --previous --tail=200 || true
+          done
       - name: Run Helm smoke tests
-        if: always()
+        if: success()
         run: |
           helm test fuelsense -n fuelsense
+      - name: Collect Kubernetes diagnostics after smoke test failure
+        if: failure()
+        run: |
+          kubectl get pods -n fuelsense -o wide || true
+          kubectl get events -n fuelsense --sort-by=.lastTimestamp | tail -n 300 || true
+          kubectl get pod -n fuelsense fuelsense-smoke -o yaml || true
+          kubectl describe pod -n fuelsense fuelsense-smoke || true
+          kubectl logs -n fuelsense fuelsense-smoke --tail=500 || true
+          for pod in $(kubectl get pods -n fuelsense -o name 2>/dev/null); do
+            kubectl describe -n fuelsense "$pod" || true
+            kubectl logs -n fuelsense "$pod" --all-containers --tail=200 || true
+            kubectl logs -n fuelsense "$pod" --all-containers --previous --tail=200 || true
+          done

@@ -23,6 +23,7 @@ from fuelsense_common.schemas import (
     HealthResponse,
     QuantilePrediction,
 )
+import forecaster.backends  # noqa: F401
 
 INFERENCE_LATENCY = Histogram(
     "forecaster_inference_latency_ms",
@@ -41,6 +42,13 @@ def _coerce_predictions(predictions: Any) -> np.ndarray:
     if arr.ndim != 3:
         raise ValueError("backend prediction output must have shape [n, horizon, quantiles]")
     return arr
+
+
+def _validate_lookback_matrix(lookback: np.ndarray) -> None:
+    if lookback.shape != (90, 6):
+        raise ValueError(f"lookback must have shape (90, 6), got {lookback.shape}")
+    if not np.isfinite(lookback).all():
+        raise ValueError("lookback contains non-finite values")
 
 
 def _to_forecast_response(facility_id: int, output: np.ndarray, inference_time_ms: float) -> ForecastResponse:
@@ -83,7 +91,13 @@ def predict(request: ForecastRequest) -> ForecastResponse:
     if backend is None or not hasattr(backend, "predict"):
         raise HTTPException(status_code=503, detail="Forecaster backend unavailable")
 
-    lookback = np.asarray(request.lookback, dtype=np.float32).reshape(1, 90, 6)
+    try:
+        lookback_matrix = np.asarray(request.lookback, dtype=np.float32)
+        _validate_lookback_matrix(lookback_matrix)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    lookback = lookback_matrix.reshape(1, 90, 6)
     start = perf_counter()
     raw_predictions = cast(Any, backend).predict(lookback)
     elapsed_ms = (perf_counter() - start) * 1000
@@ -101,7 +115,16 @@ def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
     if not request.requests:
         return BatchForecastResponse(responses=[], total_inference_time_ms=0.0, device=device_type.value)
 
-    batch_input = np.stack([np.asarray(item.lookback, dtype=np.float32) for item in request.requests], axis=0)
+    matrices: list[np.ndarray] = []
+    for item in request.requests:
+        matrix = np.asarray(item.lookback, dtype=np.float32)
+        try:
+            _validate_lookback_matrix(matrix)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        matrices.append(matrix)
+
+    batch_input = np.stack(matrices, axis=0)
     start = perf_counter()
     raw_predictions = cast(Any, backend).predict(batch_input)
     elapsed_ms = (perf_counter() - start) * 1000

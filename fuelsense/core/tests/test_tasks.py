@@ -17,6 +17,25 @@ from fuelsense.core.tests.factories import (
 )
 
 
+def test_handle_remote_unavailable_requires_remote(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FUELSENSE_REQUIRE_REMOTE_SERVICES", "1")
+    with pytest.raises(RuntimeError):
+        tasks._handle_remote_unavailable("forecaster", "remote_disabled")
+
+
+def test_handle_remote_unavailable_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FUELSENSE_REQUIRE_REMOTE_SERVICES", "0")
+    seen: dict[str, object] = {}
+
+    def _warning(msg: str, **kwargs: object) -> None:
+        seen["msg"] = msg
+        seen["extra"] = kwargs.get("extra")
+
+    monkeypatch.setattr(tasks.logger, "warning", _warning)
+    tasks._handle_remote_unavailable("forecaster", "remote_disabled")
+    assert seen.get("msg") == "using fallback mode"
+
+
 @pytest.mark.django_db
 def test_tasks_execute_and_return_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
     facility = FacilityFactory()
@@ -75,7 +94,7 @@ def test_retrain_model_promotes_when_improved(monkeypatch: pytest.MonkeyPatch) -
                 "test_rmse": 1.2,
             }
 
-    monkeypatch.setattr("fuelsense.core.tasks.ForecastTrainer", _Trainer)
+    monkeypatch.setattr("ml_pipeline.training.ForecastTrainer", _Trainer)
 
     result = tasks.retrain_model(facility.id, "DEMAND_FORECAST")
     assert result["status"] == "promoted"

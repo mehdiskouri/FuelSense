@@ -8,9 +8,14 @@ metadata:
 data:
   DJANGO_SETTINGS_MODULE: fuelsense.settings.production
   ALLOWED_HOSTS: "*"
+  POSTGRES_DB: {{ .Values.postgresql.db | quote }}
+  POSTGRES_USER: {{ .Values.postgresql.user | quote }}
+  POSTGRES_HOST: {{ include "fuelsense.fullname" . }}-postgresql
+  POSTGRES_PORT: "5432"
   REDIS_URL: redis://{{ include "fuelsense.fullname" . }}-redis:6379/0
   CELERY_BROKER_URL: redis://{{ include "fuelsense.fullname" . }}-redis:6379/1
   CELERY_RESULT_BACKEND: redis://{{ include "fuelsense.fullname" . }}-redis:6379/2
+  SECURE_SSL_REDIRECT: "false"
   MLFLOW_TRACKING_URI: http://{{ include "fuelsense.fullname" . }}-mlflow:5000
   FORECASTER_URL: http://{{ include "fuelsense.fullname" . }}-forecaster:8001
   ANOMALY_URL: http://{{ include "fuelsense.fullname" . }}-anomaly:8002

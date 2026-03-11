@@ -3,6 +3,9 @@ kind: Pod
 metadata:
   name: {{ include "fuelsense.fullname" . }}-smoke
   namespace: {{ .Values.global.namespace }}
+  labels:
+    app.kubernetes.io/component: smoke-test
+    {{- include "fuelsense.selectorLabels" . | nindent 4 }}
   annotations:
     "helm.sh/hook": test
 spec:
@@ -15,9 +18,13 @@ spec:
         - -c
         - |
           set -e
-          curl -fsS http://{{ include "fuelsense.fullname" . }}-django:8000/healthz
-          curl -fsS http://{{ include "fuelsense.fullname" . }}-django:8000/readyz
-          curl -fsS http://{{ include "fuelsense.fullname" . }}-forecaster:8001/health
-          curl -fsS http://{{ include "fuelsense.fullname" . }}-anomaly:8002/health
-          curl -fsS http://{{ include "fuelsense.fullname" . }}-optimizer:8003/health
-          curl -fsS http://{{ include "fuelsense.fullname" . }}-mlflow:5000/
+          probe() {
+            curl -fsS --connect-timeout 5 --max-time 15 --retry 8 --retry-delay 2 --retry-connrefused "$1"
+          }
+
+          probe http://{{ include "fuelsense.fullname" . }}-django:8000/healthz
+          probe http://{{ include "fuelsense.fullname" . }}-django:8000/readyz
+          probe http://{{ include "fuelsense.fullname" . }}-forecaster:8001/health
+          probe http://{{ include "fuelsense.fullname" . }}-anomaly:8002/health
+          probe http://{{ include "fuelsense.fullname" . }}-optimizer:8003/health
+          probe http://{{ include "fuelsense.fullname" . }}-mlflow:5000/

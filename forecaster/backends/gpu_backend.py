@@ -22,16 +22,26 @@ from fuelsense_common.registry import register_backend
 
 
 def _cuda_autocast() -> Any:
+    torch_amp: Any = getattr(torch, "amp", None)
+    if torch_amp is not None:
+        amp_autocast: Any = getattr(torch_amp, "autocast", None)
+        if amp_autocast is not None:
+            return amp_autocast(device_type="cuda", enabled=True)
     torch_autocast: Any = getattr(torch, "autocast", None)
     if torch_autocast is not None:
-        return torch_autocast("cuda", enabled=True)
+        return torch_autocast(device_type="cuda", enabled=True)
     return torch.cuda.amp.autocast(enabled=True)
 
 
 def _cuda_grad_scaler() -> Any:
+    torch_amp: Any = getattr(torch, "amp", None)
+    if torch_amp is not None:
+        amp_grad_scaler_ctor: Any = getattr(torch_amp, "GradScaler", None)
+        if amp_grad_scaler_ctor is not None:
+            return amp_grad_scaler_ctor("cuda", enabled=True)
     grad_scaler_ctor: Any = getattr(torch, "GradScaler", None)
     if grad_scaler_ctor is not None:
-        return grad_scaler_ctor("cuda", enabled=True)
+        return grad_scaler_ctor(enabled=True)
     return torch.cuda.amp.GradScaler(enabled=True)
 
 
@@ -45,6 +55,9 @@ class CUDAForecaster(ComputeBackend):
 
         self.cuda_device = torch.device("cuda:0")
         self.stream = torch.cuda.Stream(device=self.cuda_device)
+        self.train_num_workers = int(
+            os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0))))
+        )
 
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -118,12 +131,14 @@ class CUDAForecaster(ComputeBackend):
             raise RuntimeError("Model is not initialized")
 
         np_in = np.asarray(lookback, dtype=np.float32)
-        cpu_tensor = torch.from_numpy(np_in).pin_memory()
+        cpu_tensor = torch.from_numpy(np_in)
+        if np_in.shape[0] > 1:
+            cpu_tensor = cpu_tensor.pin_memory()
 
         with torch.cuda.stream(self.stream), torch.no_grad(), _cuda_autocast():
             gpu_tensor = cpu_tensor.to(self.cuda_device, non_blocking=True)
             preds = self.model(gpu_tensor)
-            preds_cpu = preds.float().detach().cpu()
+            preds_cpu = preds.detach().cpu()
 
         self.stream.synchronize()
         return preds_cpu.numpy()
@@ -140,6 +155,13 @@ class CUDAForecaster(ComputeBackend):
         weight_decay: float = 1e-4,
         patience: int = 10,
     ) -> dict[str, Any]:
+        def _expand_targets(raw: Tensor) -> Tensor:
+            if raw.ndim == 1:
+                return raw.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+            if raw.ndim == 2 and raw.shape[1] == DemandTCN.HORIZON:
+                return raw
+            raise ValueError("targets must have shape [N] or [N, HORIZON]")
+
         model = DemandTCN().to(self.cuda_device)
         optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         optimizer_any: Any = optimizer
@@ -157,8 +179,8 @@ class CUDAForecaster(ComputeBackend):
             batch_size=batch_size,
             shuffle=True,
             pin_memory=True,
-            num_workers=2,
-            persistent_workers=True,
+            num_workers=max(self.train_num_workers, 0),
+            persistent_workers=self.train_num_workers > 0,
         )
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
@@ -176,7 +198,7 @@ class CUDAForecaster(ComputeBackend):
                 optimizer_any.zero_grad(set_to_none=True)
                 with _cuda_autocast():
                     preds = model(batch_x)
-                    target = batch_y.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+                    target = _expand_targets(batch_y)
                     loss = self.loss_fn(preds, target)
 
                 scaled_loss: Any = scaler.scale(loss)
@@ -190,7 +212,7 @@ class CUDAForecaster(ComputeBackend):
             model.eval()
             with torch.no_grad(), _cuda_autocast():
                 val_preds = model(val_x)
-                val_target = val_y.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+                val_target = _expand_targets(val_y)
                 val_loss = float(self.loss_fn(val_preds, val_target).detach().cpu().item())
 
             epoch_train = float(np.mean(train_losses)) if train_losses else val_loss
@@ -220,14 +242,26 @@ class CUDAForecaster(ComputeBackend):
             pred = self.model(val_x)
             torch.cuda.synchronize(self.cuda_device)
             inference_ms = (perf_counter() - start) * 1000
-            pred_p50 = pred[:, :, 1].mean(dim=1)
-            rmse = float(torch.sqrt(torch.mean((pred_p50 - val_y) ** 2)).detach().cpu().item())
+            pred_p50 = pred[:, :, 1]
+            val_target = _expand_targets(val_y)
+            rmse = float(torch.sqrt(torch.mean((pred_p50 - val_target) ** 2)).detach().cpu().item())
+
+        train_rmse = 0.0
+        if train_x.shape[0] > 0:
+            with torch.no_grad(), _cuda_autocast():
+                full_train_x = train_x.to(self.cuda_device, non_blocking=True)
+                full_train_y = train_y.to(self.cuda_device, non_blocking=True)
+                train_pred = self.model(full_train_x)
+                train_p50 = train_pred[:, :, 1]
+                train_target = _expand_targets(full_train_y)
+                train_rmse = float(torch.sqrt(torch.mean((train_p50 - train_target) ** 2)).detach().cpu().item())
 
         return {
             "history": history,
             "best_state_dict": {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()},
             "best_val_loss": best_val,
             "epochs_trained": len(history["val_loss"]),
+            "training_rmse": train_rmse,
             "validation_rmse": rmse,
             "validation_inference_time_ms": inference_ms,
         }

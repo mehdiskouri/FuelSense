@@ -111,27 +111,81 @@ def build_lookback_matrix(facility_ids: Iterable[int]) -> np.ndarray:
     return np.stack(matrices, axis=0)
 
 
-def extract_training_data(facility_id: int | None) -> dict[str, np.ndarray]:
-    """Extract temporal train/val/test arrays for a facility or global dataset."""
-    if facility_id is None:
-        logs_qs = InventoryLog.objects.all().order_by("timestamp")
-    else:
-        logs_qs = InventoryLog.objects.filter(facility_id=facility_id).order_by("timestamp")
-
-    rows = [
-        _SeriesRow(
-            timestamp=item["timestamp"],
-            consumption=_safe_float(item["consumption"]),
-            temperature=_safe_float(item["temperature"], default=float("nan")),
-            wind_speed=_safe_float(item["wind_speed"], default=float("nan")),
-            solar_irradiance=_safe_float(item["solar_irradiance"], default=float("nan")),
+def _build_supervised_windows(
+    rows: list[_SeriesRow],
+    lookback: int = 90,
+    horizon: int = 14,
+) -> tuple[np.ndarray, np.ndarray, list[Any]]:
+    if len(rows) < lookback + horizon:
+        return (
+            np.zeros((0, lookback, 6), dtype=np.float32),
+            np.zeros((0, horizon), dtype=np.float32),
+            [],
         )
-        for item in logs_qs.values("timestamp", "consumption", "temperature", "wind_speed", "solar_irradiance")
-    ]
-    rows = _forward_fill(rows)
 
     features = np.asarray([_row_to_features(row) for row in rows], dtype=np.float32)
-    targets = np.asarray([row.consumption for row in rows], dtype=np.float32)
+    consumption = np.asarray([row.consumption for row in rows], dtype=np.float32)
+
+    x_windows: list[np.ndarray] = []
+    y_windows: list[np.ndarray] = []
+    anchors: list[Any] = []
+    max_end = len(rows) - horizon + 1
+    for end_idx in range(lookback, max_end):
+        x_windows.append(features[end_idx - lookback : end_idx])
+        y_windows.append(consumption[end_idx : end_idx + horizon])
+        anchors.append(rows[end_idx].timestamp)
+
+    return (
+        np.asarray(x_windows, dtype=np.float32),
+        np.asarray(y_windows, dtype=np.float32),
+        anchors,
+    )
+
+
+def extract_training_data(facility_id: int | None) -> dict[str, np.ndarray]:
+    """Extract train/val/test arrays as supervised windows for TCN training.
+
+    Output contract:
+      - *_data: [n_samples, 90, 6]
+      - *_targets: [n_samples, 14]
+    """
+    if facility_id is None:
+        facility_ids = list(
+            InventoryLog.objects.order_by("facility_id").values_list("facility_id", flat=True).distinct()
+        )
+    else:
+        facility_ids = [facility_id]
+
+    all_x: list[np.ndarray] = []
+    all_y: list[np.ndarray] = []
+    all_anchors: list[Any] = []
+    for fid in facility_ids:
+        rows = _inventory_series_for_facility(int(fid))
+        x, y, anchors = _build_supervised_windows(rows, lookback=90, horizon=14)
+        if x.shape[0] == 0:
+            continue
+        all_x.append(x)
+        all_y.append(y)
+        all_anchors.extend(anchors)
+
+    if not all_x:
+        empty_x = np.zeros((0, 90, 6), dtype=np.float32)
+        empty_y = np.zeros((0, 14), dtype=np.float32)
+        return {
+            "train_data": empty_x,
+            "train_targets": empty_y,
+            "val_data": empty_x,
+            "val_targets": empty_y,
+            "test_data": empty_x,
+            "test_targets": empty_y,
+        }
+
+    features = np.concatenate(all_x, axis=0)
+    targets = np.concatenate(all_y, axis=0)
+
+    order = np.asarray(sorted(range(len(all_anchors)), key=all_anchors.__getitem__), dtype=np.int64)
+    features = features[order]
+    targets = targets[order]
 
     n = int(features.shape[0])
     test_size = min(14, n)

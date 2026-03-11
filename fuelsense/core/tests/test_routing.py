@@ -4,7 +4,7 @@ import datetime as dt
 
 import pytest
 
-from fuelsense.core.routing import _haversine, build_optimizer_request
+from fuelsense.core.routing import _haversine, _time_to_minutes, build_optimizer_request
 from fuelsense.core.tests.factories import DepotFacilityAssignmentFactory, DepotFactory, FacilityFactory, VehicleFactory
 
 
@@ -13,6 +13,11 @@ def test_haversine_known_value() -> None:
     # Approx Riyadh to Dammam great-circle distance.
     km = _haversine(24.7136, 46.6753, 26.4207, 50.0888)
     assert abs(km - 394.0) < 5.0
+
+
+@pytest.mark.django_db
+def test_time_to_minutes_uses_default_for_none() -> None:
+    assert _time_to_minutes(None, 123) == 123
 
 
 @pytest.mark.django_db
