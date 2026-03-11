@@ -58,7 +58,7 @@ def test_retrain_integration_promotes_with_windowed_dataset(monkeypatch: pytest.
                 "test_rmse": 1.2,
             }
 
-    monkeypatch.setattr("fuelsense.core.tasks.ForecastTrainer", _Trainer)
+    monkeypatch.setattr("ml_pipeline.training.ForecastTrainer", _Trainer)
 
     result = tasks.retrain_model(facility.id, ModelRegistry.ModelType.DEMAND_FORECAST)
     assert result["status"] == "promoted"

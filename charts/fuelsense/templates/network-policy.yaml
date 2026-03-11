@@ -45,6 +45,31 @@ spec:
               - key: app.kubernetes.io/component
                 operator: In
                 values: ["django", "celery-default", "celery-training", "celery-planning", "celery-beat", "mlflow", "prometheus"]
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: smoke-test
+              {{- include "fuelsense.selectorLabels" . | nindent 14 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fuelsense.fullname" . }}-allow-smoke-to-mlflow
+  namespace: {{ .Values.global.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: mlflow
+      {{- include "fuelsense.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: smoke-test
+              {{- include "fuelsense.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5000
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

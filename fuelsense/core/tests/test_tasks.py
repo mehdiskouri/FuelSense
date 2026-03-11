@@ -94,7 +94,7 @@ def test_retrain_model_promotes_when_improved(monkeypatch: pytest.MonkeyPatch) -
                 "test_rmse": 1.2,
             }
 
-    monkeypatch.setattr("fuelsense.core.tasks.ForecastTrainer", _Trainer)
+    monkeypatch.setattr("ml_pipeline.training.ForecastTrainer", _Trainer)
 
     result = tasks.retrain_model(facility.id, "DEMAND_FORECAST")
     assert result["status"] == "promoted"

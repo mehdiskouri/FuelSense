@@ -280,3 +280,16 @@ jobs:
         if: success()
         run: |
           helm test fuelsense -n fuelsense
+      - name: Collect Kubernetes diagnostics after smoke test failure
+        if: failure()
+        run: |
+          kubectl get pods -n fuelsense -o wide || true
+          kubectl get events -n fuelsense --sort-by=.lastTimestamp | tail -n 300 || true
+          kubectl get pod -n fuelsense fuelsense-smoke -o yaml || true
+          kubectl describe pod -n fuelsense fuelsense-smoke || true
+          kubectl logs -n fuelsense fuelsense-smoke --tail=500 || true
+          for pod in $(kubectl get pods -n fuelsense -o name 2>/dev/null); do
+            kubectl describe -n fuelsense "$pod" || true
+            kubectl logs -n fuelsense "$pod" --all-containers --tail=200 || true
+            kubectl logs -n fuelsense "$pod" --all-containers --previous --tail=200 || true
+          done
