@@ -8,8 +8,10 @@ Require all of the following checks to pass before merge:
 
 - `lint-and-typecheck`
 - `test-django`
+- `test-training-integration`
 - `test-ml-services`
 - `validate-helm`
+- `build-images`
 
 ## Pull Request Requirements
 
