@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 from celery import chord, shared_task
+from django.db import transaction
 from django.db.models import F, Max
 from django.utils import timezone
 
@@ -465,94 +466,243 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
 
 
 @shared_task(queue="planning")
-def run_planning_cycle() -> dict[str, Any]:
-    queued_facilities = list(
-        Facility.objects.filter(is_active=True, current_inventory__lte=F("dynamic_reorder_point")).order_by("id")
-    )
-    if not queued_facilities:
-        return {"queued": 0, "planning_cycles": 0, "deliveries_created": 0}
+def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
+    cycle: PlanningCycle | None = None
+    if cycle_id is not None:
+        try:
+            with transaction.atomic():
+                cycle = PlanningCycle.objects.select_for_update().get(id=cycle_id)
+                if cycle.status != PlanningCycle.ExecutionStatus.QUEUED:
+                    return {"cycle_id": cycle_id, "status": cycle.status, "already_processed": True}
+                cycle.status = PlanningCycle.ExecutionStatus.RUNNING
+                cycle.started_at = timezone.now()
+                cycle.save(update_fields=["status", "started_at"])
+        except PlanningCycle.DoesNotExist:
+            return {"cycle_id": cycle_id, "error": "cycle_not_found"}
 
-    assignments = (
-        DepotFacilityAssignment.objects.filter(facility_id__in=[int(f.id) for f in queued_facilities])
-        .select_related("depot", "facility")
-        .order_by("depot_id", "facility_id")
-    )
-    facilities_by_depot: dict[int, list[Any]] = {}
-    depot_map: dict[int, Any] = {}
-    for assignment in assignments:
-        depot_map[int(assignment.depot_id)] = assignment.depot
-        facilities_by_depot.setdefault(int(assignment.depot_id), []).append(assignment.facility)
-
-    planning_cycles = 0
-    deliveries_created = 0
-    for depot_id, facilities in facilities_by_depot.items():
-        depot = depot_map[depot_id]
-        payload, facility_index_map = build_optimizer_request(depot, facilities)
-        result = _run_optimizer(payload)
-        routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
-
-        cycle = PlanningCycle.objects.create(
-            trigger_type=PlanningCycle.TriggerType.SCHEDULED,
-            facilities_in_queue=len(facilities),
-            deliveries_created=len(routes),
-            total_distance_km=float(result.get("total_distance_km", 0.0)),
-            total_cost=float(result.get("total_cost", 0.0)),
-            solver_time_ms=float(result.get("solver_time_ms", 0.0)),
-            baseline_cost=float(result.get("baseline_cost", 0.0)),
-            cost_reduction_pct=float(result.get("cost_reduction_pct", 0.0)),
+    try:
+        queued_facilities = list(
+            Facility.objects.filter(is_active=True, current_inventory__lte=F("dynamic_reorder_point")).order_by("id")
         )
-        planning_cycles += 1
-
-        vehicles = list(depot.vehicles.filter(is_available=True).order_by("id"))
-        for route in routes:
-            vehicle_idx = int(route.get("vehicle_index", 0))
-            if vehicle_idx < 0 or vehicle_idx >= len(vehicles):
-                continue
-            delivery = Delivery.objects.create(
-                depot=depot,
-                vehicle=vehicles[vehicle_idx],
-                planned_date=timezone.localdate(),
-                status=Delivery.Status.PLANNED,
-                total_distance_km=float(route.get("distance_km", 0.0)),
-                total_cost=float(route.get("cost", 0.0)),
-                route_json=route,
-                solver_time_ms=float(result.get("solver_time_ms", 0.0)),
-                created_by_planning_cycle=cycle,
-            )
-            deliveries_created += 1
-
-            for stop in list(route.get("stops", [])):
-                if not isinstance(stop, dict):
-                    continue
-                facility_index = int(stop.get("facility_index", -1))
-                facility_id = facility_index_map.get(facility_index)
-                if facility_id is None:
-                    continue
-                DeliveryItem.objects.create(
-                    delivery=delivery,
-                    facility_id=facility_id,
-                    quantity=float(stop.get("demand", 0.0)),
-                    planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
-                    sequence=int(stop.get("sequence", 1)),
+        if not queued_facilities:
+            if cycle is not None:
+                cycle.facilities_in_queue = 0
+                cycle.deliveries_created = 0
+                cycle.total_distance_km = 0.0
+                cycle.total_cost = 0.0
+                cycle.solver_time_ms = 0.0
+                cycle.baseline_cost = 0.0
+                cycle.cost_reduction_pct = 0.0
+                cycle.status = PlanningCycle.ExecutionStatus.COMPLETED
+                cycle.completed_at = timezone.now()
+                cycle.save(
+                    update_fields=[
+                        "facilities_in_queue",
+                        "deliveries_created",
+                        "total_distance_km",
+                        "total_cost",
+                        "solver_time_ms",
+                        "baseline_cost",
+                        "cost_reduction_pct",
+                        "status",
+                        "completed_at",
+                    ]
                 )
+            return {"queued": 0, "planning_cycles": 0, "deliveries_created": 0}
 
-    logger.info(
-        "run_planning_cycle completed",
-        extra={
+        assignments = (
+            DepotFacilityAssignment.objects.filter(facility_id__in=[int(f.id) for f in queued_facilities])
+            .select_related("depot", "facility")
+            .order_by("depot_id", "facility_id")
+        )
+        facilities_by_depot: dict[int, list[Any]] = {}
+        depot_map: dict[int, Any] = {}
+        for assignment in assignments:
+            depot_map[int(assignment.depot_id)] = assignment.depot
+            facilities_by_depot.setdefault(int(assignment.depot_id), []).append(assignment.facility)
+
+        planning_cycles = 0
+        deliveries_created = 0
+        total_distance = 0.0
+        total_cost = 0.0
+        total_solver_time = 0.0
+        total_baseline = 0.0
+
+        for depot_id, facilities in facilities_by_depot.items():
+            depot = depot_map[depot_id]
+            payload, facility_index_map = build_optimizer_request(depot, facilities)
+            result = _run_optimizer(payload)
+            routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
+
+            cycle_for_delivery: PlanningCycle
+            if cycle is None:
+                now = timezone.now()
+                cycle_for_delivery = PlanningCycle.objects.create(
+                    trigger_type=PlanningCycle.TriggerType.SCHEDULED,
+                    status=PlanningCycle.ExecutionStatus.COMPLETED,
+                    started_at=now,
+                    completed_at=now,
+                    facilities_in_queue=len(facilities),
+                    deliveries_created=len(routes),
+                    total_distance_km=float(result.get("total_distance_km", 0.0)),
+                    total_cost=float(result.get("total_cost", 0.0)),
+                    solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+                    baseline_cost=float(result.get("baseline_cost", 0.0)),
+                    cost_reduction_pct=float(result.get("cost_reduction_pct", 0.0)),
+                )
+                planning_cycles += 1
+            else:
+                cycle_for_delivery = cycle
+
+            vehicles = list(depot.vehicles.filter(is_available=True).order_by("id"))
+            for route in routes:
+                vehicle_idx = int(route.get("vehicle_index", 0))
+                if vehicle_idx < 0 or vehicle_idx >= len(vehicles):
+                    continue
+                delivery = Delivery.objects.create(
+                    depot=depot,
+                    vehicle=vehicles[vehicle_idx],
+                    planned_date=timezone.localdate(),
+                    status=Delivery.Status.PLANNED,
+                    total_distance_km=float(route.get("distance_km", 0.0)),
+                    total_cost=float(route.get("cost", 0.0)),
+                    route_json=route,
+                    solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+                    created_by_planning_cycle=cycle_for_delivery,
+                )
+                deliveries_created += 1
+
+                for stop in list(route.get("stops", [])):
+                    if not isinstance(stop, dict):
+                        continue
+                    facility_index = int(stop.get("facility_index", -1))
+                    facility_id = facility_index_map.get(facility_index)
+                    if facility_id is None:
+                        continue
+                    DeliveryItem.objects.create(
+                        delivery=delivery,
+                        facility_id=facility_id,
+                        quantity=float(stop.get("demand", 0.0)),
+                        planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
+                        sequence=int(stop.get("sequence", 1)),
+                    )
+
+            total_distance += float(result.get("total_distance_km", 0.0))
+            total_cost += float(result.get("total_cost", 0.0))
+            total_solver_time += float(result.get("solver_time_ms", 0.0))
+            total_baseline += float(result.get("baseline_cost", 0.0))
+
+        if cycle is not None:
+            reduction = 0.0
+            if total_baseline > 0.0:
+                reduction = max((total_baseline - total_cost) / total_baseline * 100.0, 0.0)
+            cycle.facilities_in_queue = len(queued_facilities)
+            cycle.deliveries_created = deliveries_created
+            cycle.total_distance_km = total_distance
+            cycle.total_cost = total_cost
+            cycle.solver_time_ms = total_solver_time
+            cycle.baseline_cost = total_baseline
+            cycle.cost_reduction_pct = reduction
+            cycle.status = PlanningCycle.ExecutionStatus.COMPLETED
+            cycle.completed_at = timezone.now()
+            cycle.save(
+                update_fields=[
+                    "facilities_in_queue",
+                    "deliveries_created",
+                    "total_distance_km",
+                    "total_cost",
+                    "solver_time_ms",
+                    "baseline_cost",
+                    "cost_reduction_pct",
+                    "status",
+                    "completed_at",
+                ]
+            )
+            planning_cycles = 1
+
+        logger.info(
+            "run_planning_cycle completed",
+            extra={
+                "queued": len(queued_facilities),
+                "planning_cycles": planning_cycles,
+                "deliveries_created": deliveries_created,
+                "cycle_id": cycle_id,
+            },
+        )
+        return {
             "queued": len(queued_facilities),
             "planning_cycles": planning_cycles,
             "deliveries_created": deliveries_created,
-        },
-    )
-    return {
-        "queued": len(queued_facilities),
-        "planning_cycles": planning_cycles,
-        "deliveries_created": deliveries_created,
-    }
+        }
+    except Exception as exc:
+        if cycle is not None:
+            cycle.status = PlanningCycle.ExecutionStatus.FAILED
+            cycle.completed_at = timezone.now()
+            cycle.save(update_fields=["status", "completed_at"])
+        return {
+            "cycle_id": cycle_id,
+            "error": str(exc),
+            "status": PlanningCycle.ExecutionStatus.FAILED if cycle is not None else "failed",
+        }
 
 
 @shared_task(queue="planning")
-def trigger_emergency_delivery(facility_id: int) -> dict[str, Any]:
+def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict[str, Any]:
+    try:
+        with transaction.atomic():
+            cycle = PlanningCycle.objects.select_for_update().get(id=cycle_id)
+            if cycle.status != PlanningCycle.ExecutionStatus.QUEUED:
+                return {"cycle_id": cycle_id, "status": cycle.status, "already_processed": True}
+            cycle.status = PlanningCycle.ExecutionStatus.RUNNING
+            cycle.started_at = timezone.now()
+            cycle.save(update_fields=["status", "started_at"])
+    except PlanningCycle.DoesNotExist:
+        return {"cycle_id": cycle_id, "error": "cycle_not_found"}
+
+    total_deliveries = 0
+    total_distance = 0.0
+    total_cost = 0.0
+    total_solver_time = 0.0
+    total_baseline = 0.0
+
+    try:
+        for facility_id in facility_ids:
+            result = trigger_emergency_delivery(facility_id=facility_id, cycle_id=cycle_id)
+            total_deliveries += int(result.get("deliveries_created", 0))
+            total_distance += float(result.get("total_distance_km", 0.0))
+            total_cost += float(result.get("total_cost", 0.0))
+            total_solver_time += float(result.get("solver_time_ms", 0.0))
+            total_baseline += float(result.get("baseline_cost", 0.0))
+
+        reduction = 0.0
+        if total_baseline > 0.0:
+            reduction = max((total_baseline - total_cost) / total_baseline * 100.0, 0.0)
+        PlanningCycle.objects.filter(id=cycle_id).update(
+            facilities_in_queue=len(facility_ids),
+            deliveries_created=total_deliveries,
+            total_distance_km=total_distance,
+            total_cost=total_cost,
+            solver_time_ms=total_solver_time,
+            baseline_cost=total_baseline,
+            cost_reduction_pct=reduction,
+            status=PlanningCycle.ExecutionStatus.COMPLETED,
+            completed_at=timezone.now(),
+        )
+        return {
+            "cycle_id": cycle_id,
+            "facilities_in_queue": len(facility_ids),
+            "deliveries_created": total_deliveries,
+        }
+    except Exception as exc:
+        PlanningCycle.objects.filter(id=cycle_id).update(
+            status=PlanningCycle.ExecutionStatus.FAILED,
+            completed_at=timezone.now(),
+        )
+        return {"cycle_id": cycle_id, "error": str(exc), "status": PlanningCycle.ExecutionStatus.FAILED}
+
+
+@shared_task(queue="planning")
+def trigger_emergency_delivery(facility_id: int, cycle_id: int | None = None) -> dict[str, Any]:
     assignment = (
         DepotFacilityAssignment.objects.filter(facility_id=facility_id).select_related("depot", "facility").first()
     )
@@ -563,16 +713,23 @@ def trigger_emergency_delivery(facility_id: int) -> dict[str, Any]:
     result = _run_optimizer(payload)
     routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
 
-    cycle = PlanningCycle.objects.create(
-        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
-        facilities_in_queue=1,
-        deliveries_created=len(routes),
-        total_distance_km=float(result.get("total_distance_km", 0.0)),
-        total_cost=float(result.get("total_cost", 0.0)),
-        solver_time_ms=float(result.get("solver_time_ms", 0.0)),
-        baseline_cost=float(result.get("baseline_cost", 0.0)),
-        cost_reduction_pct=float(result.get("cost_reduction_pct", 0.0)),
-    )
+    if cycle_id is None:
+        now = timezone.now()
+        cycle: PlanningCycle | None = PlanningCycle.objects.create(
+            trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+            status=PlanningCycle.ExecutionStatus.COMPLETED,
+            started_at=now,
+            completed_at=now,
+            facilities_in_queue=1,
+            deliveries_created=len(routes),
+            total_distance_km=float(result.get("total_distance_km", 0.0)),
+            total_cost=float(result.get("total_cost", 0.0)),
+            solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+            baseline_cost=float(result.get("baseline_cost", 0.0)),
+            cost_reduction_pct=float(result.get("cost_reduction_pct", 0.0)),
+        )
+    else:
+        cycle = PlanningCycle.objects.filter(id=cycle_id).first()
 
     vehicles = list(assignment.depot.vehicles.filter(is_available=True).order_by("id"))
     delivery_count = 0
@@ -609,6 +766,14 @@ def trigger_emergency_delivery(facility_id: int) -> dict[str, Any]:
 
     logger.info(
         "trigger_emergency_delivery completed",
-        extra={"facility_id": facility_id, "deliveries_created": delivery_count},
+        extra={"facility_id": facility_id, "deliveries_created": delivery_count, "cycle_id": cycle_id},
     )
-    return {"facility_id": facility_id, "exists": True, "deliveries_created": delivery_count}
+    return {
+        "facility_id": facility_id,
+        "exists": True,
+        "deliveries_created": delivery_count,
+        "total_distance_km": float(result.get("total_distance_km", 0.0)),
+        "total_cost": float(result.get("total_cost", 0.0)),
+        "solver_time_ms": float(result.get("solver_time_ms", 0.0)),
+        "baseline_cost": float(result.get("baseline_cost", 0.0)),
+    }

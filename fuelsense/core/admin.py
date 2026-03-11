@@ -143,6 +143,9 @@ class PlanningCycleAdmin(admin.ModelAdmin):
     list_display = (
         "triggered_at",
         "trigger_type",
+        "status",
+        "started_at",
+        "completed_at",
         "facilities_in_queue",
         "deliveries_created",
         "total_cost",
@@ -238,7 +241,9 @@ def admin_dashboard(request):
         "avg_delivery_cost": Delivery.objects.aggregate(v=Avg("total_cost"))["v"] or 0.0,
         "forecast_accuracy": Forecast.objects.aggregate(v=Avg("rmse"))["v"] or 0.0,
         "anomaly_detection_rate": (AnomalyAlert.objects.count() / max(InventoryLog.objects.count(), 1)) * 100,
-        "route_cost_reduction": PlanningCycle.objects.exclude(cost_reduction_pct__isnull=True).aggregate(
+        "route_cost_reduction": PlanningCycle.objects.filter(
+            status=PlanningCycle.ExecutionStatus.COMPLETED
+        ).exclude(cost_reduction_pct__isnull=True).aggregate(
             v=Avg("cost_reduction_pct")
         )["v"]
         or 0.0,

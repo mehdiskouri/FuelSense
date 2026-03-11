@@ -265,9 +265,116 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
 
     result = tasks.run_planning_cycle()
     assert result["deliveries_created"] == 1
-    assert PlanningCycle.objects.filter(trigger_type=PlanningCycle.TriggerType.SCHEDULED).count() == 1
+    cycle = PlanningCycle.objects.get(trigger_type=PlanningCycle.TriggerType.SCHEDULED)
+    assert cycle.status == PlanningCycle.ExecutionStatus.COMPLETED
     assert Delivery.objects.filter(vehicle=vehicle).count() == 1
     assert DeliveryItem.objects.filter(facility=facility).count() == 1
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_updates_existing_queued_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory()
+    VehicleFactory(depot=depot, is_available=True)
+    facility = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0)
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.MANUAL,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=0,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "1")
+    monkeypatch.setattr(
+        "fuelsense.core.tasks.build_optimizer_request",
+        lambda _depot, _facilities: (
+            {
+                "depot_lat": 24.7,
+                "depot_lng": 46.7,
+                "vehicles": [{"capacity": 1000.0, "cost_per_km": 2.0}],
+                "stops": [
+                    {
+                        "facility_index": 1,
+                        "demand": 70.0,
+                        "time_window_start": 300,
+                        "time_window_end": 900,
+                        "service_time": 30,
+                    }
+                ],
+                "distance_matrix": [[0.0, 12.0], [12.0, 0.0]],
+                "max_route_duration": 480,
+            },
+            {1: facility.id},
+        ),
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "status": "optimal",
+                "routes": [
+                    {
+                        "vehicle_index": 0,
+                        "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
+                        "distance_km": 24.0,
+                        "cost": 48.0,
+                    }
+                ],
+                "total_distance_km": 24.0,
+                "total_cost": 48.0,
+                "vehicles_used": 1,
+                "solver_time_ms": 20.0,
+                "baseline_cost": 60.0,
+                "cost_reduction_pct": 20.0,
+            }
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            _ = exc_type, exc, tb
+
+        def post(self, _url: str, json: dict[str, object]) -> _Response:
+            assert "stops" in json
+            return _Response()
+
+    monkeypatch.setattr("fuelsense.core.tasks.httpx.Client", lambda timeout: _Client())
+
+    result = tasks.run_planning_cycle(cycle.id)
+    assert result["planning_cycles"] == 1
+    cycle.refresh_from_db()
+    assert cycle.status == PlanningCycle.ExecutionStatus.COMPLETED
+    assert cycle.deliveries_created == 1
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_idempotent_when_not_queued() -> None:
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.MANUAL,
+        status=PlanningCycle.ExecutionStatus.COMPLETED,
+        facilities_in_queue=1,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    result = tasks.run_planning_cycle(cycle.id)
+    assert result["already_processed"] is True
+    assert result["status"] == PlanningCycle.ExecutionStatus.COMPLETED
 
 
 @pytest.mark.django_db
@@ -382,4 +489,92 @@ def test_trigger_emergency_delivery_creates_emergency_cycle(monkeypatch: pytest.
     result = tasks.trigger_emergency_delivery(facility.id)
     assert result["exists"] is True
     assert result["deliveries_created"] == 1
-    assert PlanningCycle.objects.filter(trigger_type=PlanningCycle.TriggerType.EMERGENCY).count() == 1
+    cycle = PlanningCycle.objects.get(trigger_type=PlanningCycle.TriggerType.EMERGENCY)
+    assert cycle.status == PlanningCycle.ExecutionStatus.COMPLETED
+
+
+@pytest.mark.django_db
+def test_run_emergency_planning_cycle_uses_single_parent_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory()
+    VehicleFactory(depot=depot, is_available=True)
+    facility = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0)
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=1,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "1")
+    monkeypatch.setattr(
+        "fuelsense.core.tasks.build_optimizer_request",
+        lambda _depot, _facilities: (
+            {
+                "depot_lat": 24.7,
+                "depot_lng": 46.7,
+                "vehicles": [{"capacity": 1000.0, "cost_per_km": 2.0}],
+                "stops": [
+                    {
+                        "facility_index": 1,
+                        "demand": 90.0,
+                        "time_window_start": 300,
+                        "time_window_end": 900,
+                        "service_time": 30,
+                    }
+                ],
+                "distance_matrix": [[0.0, 10.0], [10.0, 0.0]],
+                "max_route_duration": 480,
+            },
+            {1: facility.id},
+        ),
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "status": "optimal",
+                "routes": [
+                    {
+                        "vehicle_index": 0,
+                        "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
+                        "distance_km": 20.0,
+                        "cost": 40.0,
+                    }
+                ],
+                "total_distance_km": 20.0,
+                "total_cost": 40.0,
+                "vehicles_used": 1,
+                "solver_time_ms": 15.0,
+                "baseline_cost": 50.0,
+                "cost_reduction_pct": 20.0,
+            }
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            _ = exc_type, exc, tb
+
+        def post(self, _url: str, json: dict[str, object]) -> _Response:
+            assert "stops" in json
+            return _Response()
+
+    monkeypatch.setattr("fuelsense.core.tasks.httpx.Client", lambda timeout: _Client())
+
+    result = tasks.run_emergency_planning_cycle(cycle.id, [facility.id])
+    assert result["deliveries_created"] == 1
+    cycle.refresh_from_db()
+    assert cycle.status == PlanningCycle.ExecutionStatus.COMPLETED
+    assert Delivery.objects.filter(created_by_planning_cycle=cycle).count() == 1

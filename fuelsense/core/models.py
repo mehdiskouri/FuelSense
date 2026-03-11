@@ -114,8 +114,21 @@ class PlanningCycle(models.Model):
         MANUAL = "MANUAL", "Manual"
         EMERGENCY = "EMERGENCY", "Emergency"
 
+    class ExecutionStatus(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+
     triggered_at = models.DateTimeField(auto_now_add=True)
     trigger_type = models.CharField(max_length=20, choices=TriggerType.choices)
+    status = models.CharField(
+        max_length=20,
+        choices=ExecutionStatus.choices,
+        default=ExecutionStatus.COMPLETED,
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
     facilities_in_queue = models.IntegerField()
     deliveries_created = models.IntegerField()
     total_distance_km = models.FloatField()
@@ -124,8 +137,14 @@ class PlanningCycle(models.Model):
     baseline_cost = models.FloatField(null=True)
     cost_reduction_pct = models.FloatField(null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["status", "trigger_type"]),
+            models.Index(fields=["-triggered_at", "status"]),
+        ]
+
     def __str__(self) -> str:
-        return f"PlanningCycle {self.id} ({self.trigger_type})"
+        return f"PlanningCycle {self.id} ({self.trigger_type}/{self.status})"
 
 
 class Delivery(models.Model):

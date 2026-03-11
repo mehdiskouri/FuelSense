@@ -80,14 +80,17 @@ def test_planning_model_dashboard_endpoints(api_client: Any, monkeypatch: pytest
     called: dict[str, list[str]] = {"tasks": []}
 
     def fake_send_task(name: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> None:
-        _ = args, kwargs
-        called["tasks"].append(name)
+        _ = args
+        called["tasks"].append(f"{name}:{kwargs}")
 
     monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
 
     trig = api_client.post("/api/v1/planning/trigger/", {"trigger_type": "MANUAL"}, format="json")
     assert trig.status_code == 202
+    assert trig.data["status"] == "QUEUED"
     assert called["tasks"]
+    assert "fuelsense.core.tasks.run_planning_cycle" in called["tasks"][0]
+    assert "cycle_id" in called["tasks"][0]
 
     hist = api_client.get("/api/v1/planning/history/")
     assert hist.status_code == 200
