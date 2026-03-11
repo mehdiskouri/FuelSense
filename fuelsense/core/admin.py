@@ -241,11 +241,9 @@ def admin_dashboard(request):
         "avg_delivery_cost": Delivery.objects.aggregate(v=Avg("total_cost"))["v"] or 0.0,
         "forecast_accuracy": Forecast.objects.aggregate(v=Avg("rmse"))["v"] or 0.0,
         "anomaly_detection_rate": (AnomalyAlert.objects.count() / max(InventoryLog.objects.count(), 1)) * 100,
-        "route_cost_reduction": PlanningCycle.objects.filter(
-            status=PlanningCycle.ExecutionStatus.COMPLETED
-        ).exclude(cost_reduction_pct__isnull=True).aggregate(
-            v=Avg("cost_reduction_pct")
-        )["v"]
+        "route_cost_reduction": PlanningCycle.objects.filter(status=PlanningCycle.ExecutionStatus.COMPLETED)
+        .exclude(cost_reduction_pct__isnull=True)
+        .aggregate(v=Avg("cost_reduction_pct"))["v"]
         or 0.0,
         "in_transit_count": in_transit.count(),
         "below_reorder_count": below_reorder.count(),
