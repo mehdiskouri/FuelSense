@@ -19,8 +19,8 @@ jobs:
   lint-and-typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install lint and type dependencies
@@ -39,9 +39,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint-and-typecheck]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v4.3.1
         with:
           version: v4.0.0
       - name: Install kubeconform
@@ -76,8 +76,8 @@ jobs:
         image: redis:7
         ports: ["6379:6379"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install dependencies
@@ -94,7 +94,7 @@ jobs:
         run: |
           pytest fuelsense/ --cov=fuelsense --cov-fail-under=95 --cov-report=xml:django-coverage.xml
       - name: Upload Django coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: django-coverage
           path: django-coverage.xml
@@ -104,8 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint-and-typecheck]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install dependencies
@@ -129,7 +129,7 @@ jobs:
             optimizer/tests \
             ml_pipeline/tests
       - name: Upload ML coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ml-coverage
           path: ml-coverage.xml
@@ -150,8 +150,8 @@ jobs:
         image: redis:7
         ports: ["6379:6379"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install dependencies
@@ -186,9 +186,9 @@ jobs:
           - name: optimizer
             dockerfile: Dockerfile.optimizer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -204,7 +204,7 @@ jobs:
           docker compose -f docker-compose.yml config > /tmp/compose.out
           docker compose -f docker-compose.yml -f docker-compose.gpu.yml config > /tmp/compose-gpu.out
       - name: Build and push image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -239,9 +239,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-images]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -251,7 +251,7 @@ jobs:
         with:
           cluster_name: fuelsense-ci
           config: infra/kind-config.yaml
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4.3.1
         with:
           version: v4.0.0
       - name: Create cluster and preload images
