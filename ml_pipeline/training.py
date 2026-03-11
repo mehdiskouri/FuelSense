@@ -6,28 +6,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import tempfile
 from dataclasses import dataclass
 from typing import Any
 
+import mlflow
+import mlflow.pytorch as mlflow_pytorch
 import numpy as np
 import torch
-
-try:
-    import mlflow
-    import mlflow.pytorch as mlflow_pytorch
-except ModuleNotFoundError:  # pragma: no cover - exercised in deployment images without mlflow
-    mlflow = None
-    mlflow_pytorch = None
 
 from forecaster.model import DemandTCN
 from fuelsense_common.compute import DeviceType, resolve_device
 from fuelsense_common.registry import get_backend
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,12 +41,8 @@ class ForecastTrainer:
     def __init__(self, tracking_uri: str | None = None, config: TrainerConfig | None = None) -> None:
         self.config = config or TrainerConfig(experiment_name=self.EXPERIMENT_NAME)
         self.tracking_uri = tracking_uri or os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-        self.mlflow_enabled = mlflow is not None and mlflow_pytorch is not None
-        if self.mlflow_enabled:
-            mlflow.set_tracking_uri(self.tracking_uri)
-            mlflow.set_experiment(self.config.experiment_name)
-        else:
-            logger.warning("mlflow is not installed; training runs will skip experiment tracking")
+        mlflow.set_tracking_uri(self.tracking_uri)
+        mlflow.set_experiment(self.config.experiment_name)
 
     def _hash_data(self, train_data: np.ndarray) -> str:
         blob = np.asarray(train_data, dtype=np.float32).tobytes()
@@ -134,73 +121,71 @@ class ForecastTrainer:
         validation_rmse = float(train_result.get("validation_rmse", test_rmse))
         training_rmse = float(train_result.get("training_rmse", validation_rmse))
 
-        run_id = "mlflow-disabled"
-        if self.mlflow_enabled:
-            with mlflow.start_run(run_name=run_name) as run:
-                params: dict[str, str | int | float] = {
-                    "facility_id": facility_id if facility_id is not None else "global",
-                    "device": device.value,
-                    "lookback_days": self.config.lookback_days,
-                    "horizon_days": self.config.horizon_days,
-                    "n_features": self.config.n_features,
-                    "hidden_channels": self.config.hidden_channels,
-                    "kernel_size": self.config.kernel_size,
-                    "dilations": json.dumps(self.config.dilations),
-                    "dropout": self.config.dropout,
-                    "lr": self.config.lr,
-                    "weight_decay": self.config.weight_decay,
-                    "batch_size": 512 if device == DeviceType.CUDA else 32,
-                    "train_samples": int(train_data.shape[0]),
-                    "val_samples": int(val_data.shape[0]),
-                    "test_samples": int(test_data.shape[0]),
-                }
-                mlflow.log_params(params)
+        with mlflow.start_run(run_name=run_name) as run:
+            params: dict[str, str | int | float] = {
+                "facility_id": facility_id if facility_id is not None else "global",
+                "device": device.value,
+                "lookback_days": self.config.lookback_days,
+                "horizon_days": self.config.horizon_days,
+                "n_features": self.config.n_features,
+                "hidden_channels": self.config.hidden_channels,
+                "kernel_size": self.config.kernel_size,
+                "dilations": json.dumps(self.config.dilations),
+                "dropout": self.config.dropout,
+                "lr": self.config.lr,
+                "weight_decay": self.config.weight_decay,
+                "batch_size": 512 if device == DeviceType.CUDA else 32,
+                "train_samples": int(train_data.shape[0]),
+                "val_samples": int(val_data.shape[0]),
+                "test_samples": int(test_data.shape[0]),
+            }
+            mlflow.log_params(params)
 
-                history = train_result.get("history", {})
-                train_losses = list(history.get("train_loss", []))
-                val_losses = list(history.get("val_loss", []))
-                lrs = list(history.get("lr", []))
-                for idx in range(min(len(train_losses), len(val_losses), len(lrs))):
-                    mlflow.log_metrics(
-                        {
-                            "train_loss": float(train_losses[idx]),
-                            "val_loss": float(val_losses[idx]),
-                            "learning_rate": float(lrs[idx]),
-                        },
-                        step=idx,
-                    )
-
+            history = train_result.get("history", {})
+            train_losses = list(history.get("train_loss", []))
+            val_losses = list(history.get("val_loss", []))
+            lrs = list(history.get("lr", []))
+            for idx in range(min(len(train_losses), len(val_losses), len(lrs))):
                 mlflow.log_metrics(
                     {
-                        "test_rmse": test_rmse,
-                        "test_mape": test_mape,
-                        "training_rmse": training_rmse,
-                        "validation_rmse": validation_rmse,
-                        "best_val_loss": float(train_result.get("best_val_loss", 0.0)),
-                        "epochs_trained": float(train_result.get("epochs_trained", 0)),
-                    }
+                        "train_loss": float(train_losses[idx]),
+                        "val_loss": float(val_losses[idx]),
+                        "learning_rate": float(lrs[idx]),
+                    },
+                    step=idx,
                 )
 
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    model_path = os.path.join(tmpdir, "model.pt")
-                    torch.save(state_dict, model_path)
-                    model_artifact = DemandTCN()
-                    model_artifact.load_state_dict(torch.load(model_path, map_location="cpu"))
-                    registered_name = (
-                        f"demand-forecaster-{facility_id}" if facility_id is not None else "demand-forecaster-global"
-                    )
-                    log_model_any: Any = mlflow_pytorch.log_model
-                    log_model_any(model_artifact, artifact_path="model", registered_model_name=registered_name)
+            mlflow.log_metrics(
+                {
+                    "test_rmse": test_rmse,
+                    "test_mape": test_mape,
+                    "training_rmse": training_rmse,
+                    "validation_rmse": validation_rmse,
+                    "best_val_loss": float(train_result.get("best_val_loss", 0.0)),
+                    "epochs_trained": float(train_result.get("epochs_trained", 0)),
+                }
+            )
 
-                mlflow.set_tags(
-                    {
-                        "device": device.value,
-                        "facility_id": str(facility_id) if facility_id is not None else "global",
-                        "data_hash": self._hash_data(train_data),
-                    }
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_path = os.path.join(tmpdir, "model.pt")
+                torch.save(state_dict, model_path)
+                model_artifact = DemandTCN()
+                model_artifact.load_state_dict(torch.load(model_path, map_location="cpu"))
+                registered_name = (
+                    f"demand-forecaster-{facility_id}" if facility_id is not None else "demand-forecaster-global"
                 )
+                log_model_any: Any = mlflow_pytorch.log_model
+                log_model_any(model_artifact, artifact_path="model", registered_model_name=registered_name)
 
-                run_id = run.info.run_id
+            mlflow.set_tags(
+                {
+                    "device": device.value,
+                    "facility_id": str(facility_id) if facility_id is not None else "global",
+                    "data_hash": self._hash_data(train_data),
+                }
+            )
+
+            run_id = run.info.run_id
 
         return {
             "facility_id": facility_id,

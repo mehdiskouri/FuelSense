@@ -206,6 +206,10 @@ jobs:
           load: true
           push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline') }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+      - name: Verify django runtime dependencies
+        if: matrix.name == 'django'
+        run: |
+          docker run --rm ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }} python -c "import mlflow"
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@master
         with:
