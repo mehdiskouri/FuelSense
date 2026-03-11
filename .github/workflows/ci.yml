@@ -194,11 +194,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Docker Buildx
-        timeout-minutes: 3
-        run: |
-          docker buildx version
-          docker buildx create --name fuelsense-builder --use || docker buildx use fuelsense-builder
-          docker buildx inspect --bootstrap
+        uses: docker/setup-buildx-action@v3
+        timeout-minutes: 10
       - name: Validate compose manifests
         run: |
           docker compose -f docker-compose.yml config > /tmp/compose.out
@@ -217,6 +214,7 @@ jobs:
         run: |
           docker run --rm ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }} python -c "import mlflow"
       - name: Scan image with Trivy
+        id: trivy_scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
@@ -228,7 +226,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')) || github.event_name == 'pull_request') && '1' || '0' }}
       - name: Upload Trivy SARIF
-        if: always()
+        if: always() && steps.trivy_scan.conclusion == 'success'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results-${{ matrix.name }}.sarif
