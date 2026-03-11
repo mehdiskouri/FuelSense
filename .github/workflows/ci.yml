@@ -216,11 +216,13 @@ jobs:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
           scanners: vuln
           ignore-unfixed: true
+          limit-severities-for-sarif: true
           format: sarif
           output: trivy-results-${{ matrix.name }}.sarif
           severity: CRITICAL,HIGH
-          exit-code: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && '1' || '0' }}
+          exit-code: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')) || github.event_name == 'pull_request') && '1' || '0' }}
       - name: Upload Trivy SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results-${{ matrix.name }}.sarif
