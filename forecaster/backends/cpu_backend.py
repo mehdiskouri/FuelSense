@@ -24,10 +24,14 @@ class CPUForecaster(ComputeBackend):
     device = DeviceType.CPU
 
     def __init__(self) -> None:
-        torch.set_num_threads(4)
+        cpu_count = max(os.cpu_count() or 1, 1)
+        default_threads = max(cpu_count - 1, 1)
+        threads = max(int(os.environ.get("FUELSENSE_FORECAST_CPU_THREADS", str(default_threads))), 1)
+        torch.set_num_threads(threads)
         torch.set_float32_matmul_precision("medium")
+        default_workers = min(8, max(cpu_count // 2, 1))
         self.train_num_workers = int(
-            os.environ.get("FUELSENSE_FORECAST_CPU_WORKERS", str(min(4, max((os.cpu_count() or 1) - 1, 0))))
+            os.environ.get("FUELSENSE_FORECAST_CPU_WORKERS", str(default_workers))
         )
         self.model: DemandTCN | None = DemandTCN()
         self.model.eval()

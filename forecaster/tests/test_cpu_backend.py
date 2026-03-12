@@ -76,3 +76,11 @@ def test_cpu_backend_train_accepts_horizon_targets() -> None:
         patience=2,
     )
     assert result["epochs_trained"] >= 1
+
+
+def test_cpu_backend_respects_env_thread_and_worker_policy(monkeypatch) -> None:
+    monkeypatch.setenv("FUELSENSE_FORECAST_CPU_THREADS", "2")
+    monkeypatch.setenv("FUELSENSE_FORECAST_CPU_WORKERS", "3")
+    backend = CPUForecaster()
+    assert torch.get_num_threads() == 2
+    assert backend.train_num_workers == 3

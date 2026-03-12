@@ -98,6 +98,8 @@ async def test_predict_batch_contract() -> None:
     assert response.status_code == 200
     data = response.json()
     assert len(data["responses"]) == 2
+    assert data["responses"][0]["inference_time_ms"] == pytest.approx(data["total_inference_time_ms"])
+    assert data["responses"][1]["inference_time_ms"] == pytest.approx(data["total_inference_time_ms"])
 
 
 @pytest.mark.asyncio

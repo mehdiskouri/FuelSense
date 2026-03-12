@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import os
 from datetime import time
 from typing import Any
 
 import numpy as np
+from django.core.cache import cache
 
 from fuelsense.core.reorder import get_effective_reorder_point
 
@@ -26,6 +29,38 @@ def _time_to_minutes(value: time | None, default: int) -> int:
     if value is None:
         return default
     return int(value.hour * 60 + value.minute)
+
+
+def _distance_matrix_cache_key(depot: Any, facilities: list[Any]) -> str:
+    parts: list[str] = [
+        f"depot:{int(getattr(depot, 'id', 0))}",
+        f"dlat:{float(depot.latitude):.6f}",
+        f"dlng:{float(depot.longitude):.6f}",
+    ]
+    for facility in facilities:
+        parts.append(
+            "|".join(
+                [
+                    str(int(facility.id)),
+                    f"{float(facility.latitude):.6f}",
+                    f"{float(facility.longitude):.6f}",
+                ]
+            )
+        )
+    digest = hashlib.sha1(";".join(parts).encode("utf-8")).hexdigest()
+    return f"cache:routing:distance_matrix:{digest}"
+
+
+def _compute_distance_matrix(coords: list[tuple[float, float]]) -> list[list[float]]:
+    coords_arr = np.asarray(coords, dtype=np.float64)
+    lat_rad = np.radians(coords_arr[:, 0])
+    lon_rad = np.radians(coords_arr[:, 1])
+    d_lat = lat_rad[:, None] - lat_rad[None, :]
+    d_lon = lon_rad[:, None] - lon_rad[None, :]
+    a = np.sin(d_lat / 2.0) ** 2 + np.cos(lat_rad)[:, None] * np.cos(lat_rad)[None, :] * np.sin(d_lon / 2.0) ** 2
+    a = np.clip(a, 0.0, 1.0)
+    c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a))
+    return (6371.0 * c).tolist()
 
 
 def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str, object], dict[int, int]]:
@@ -51,15 +86,18 @@ def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str
         )
         facility_index_map[idx] = int(facility.id)
 
-    coords_arr = np.asarray(coords, dtype=np.float64)
-    lat_rad = np.radians(coords_arr[:, 0])
-    lon_rad = np.radians(coords_arr[:, 1])
-    d_lat = lat_rad[:, None] - lat_rad[None, :]
-    d_lon = lon_rad[:, None] - lon_rad[None, :]
-    a = np.sin(d_lat / 2.0) ** 2 + np.cos(lat_rad)[:, None] * np.cos(lat_rad)[None, :] * np.sin(d_lon / 2.0) ** 2
-    a = np.clip(a, 0.0, 1.0)
-    c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a))
-    matrix = (6371.0 * c).tolist()
+    cache_enabled = os.environ.get("FUELSENSE_ENABLE_ROUTING_MATRIX_CACHE", "1") == "1"
+    if cache_enabled:
+        cache_key = _distance_matrix_cache_key(depot, facilities)
+        cached_matrix = cache.get(cache_key)
+        if isinstance(cached_matrix, list):
+            matrix = cached_matrix
+        else:
+            matrix = _compute_distance_matrix(coords)
+            cache_ttl = int(os.environ.get("FUELSENSE_ROUTING_MATRIX_CACHE_TTL", "600"))
+            cache.set(cache_key, matrix, timeout=max(cache_ttl, 1))
+    else:
+        matrix = _compute_distance_matrix(coords)
 
     vehicles = [
         {

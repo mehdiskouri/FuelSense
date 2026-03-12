@@ -75,3 +75,34 @@ def test_build_optimizer_request_uses_min_safe_fallback_for_demand() -> None:
     stops = payload["stops"]
     assert len(stops) == 1
     assert float(stops[0]["demand"]) == pytest.approx(70.0)
+
+
+@pytest.mark.django_db
+def test_build_optimizer_request_uses_distance_matrix_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory(latitude=24.7, longitude=46.7)
+    VehicleFactory(depot=depot, capacity=1000.0, cost_per_km=2.1, is_available=True)
+    facilities = [
+        FacilityFactory(
+            latitude=24.8,
+            longitude=46.8,
+            current_inventory=200.0,
+            dynamic_reorder_point=350.0,
+            delivery_window_start=dt.time(8, 0),
+            delivery_window_end=dt.time(14, 0),
+        )
+    ]
+    DepotFacilityAssignmentFactory(depot=depot, facility=facilities[0])
+    monkeypatch.setenv("FUELSENSE_ENABLE_ROUTING_MATRIX_CACHE", "1")
+
+    calls = {"count": 0}
+    original = __import__("fuelsense.core.routing", fromlist=["_compute_distance_matrix"])._compute_distance_matrix
+
+    def _wrapped(coords: list[tuple[float, float]]) -> list[list[float]]:
+        calls["count"] += 1
+        return original(coords)
+
+    monkeypatch.setattr("fuelsense.core.routing._compute_distance_matrix", _wrapped)
+
+    build_optimizer_request(depot, facilities)
+    build_optimizer_request(depot, facilities)
+    assert calls["count"] == 1

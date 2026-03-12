@@ -667,6 +667,53 @@ def test_run_planning_cycle_marks_failed_on_exception(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.django_db
+def test_run_planning_cycle_parallel_partial_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot_ok = DepotFactory(latitude=24.7, longitude=46.7)
+    depot_fail = DepotFactory(latitude=25.0, longitude=47.0)
+    VehicleFactory(depot=depot_ok, is_available=True)
+    VehicleFactory(depot=depot_fail, is_available=True)
+
+    facility_ok = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0, latitude=24.71, longitude=46.71)
+    facility_fail = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01)
+    DepotFacilityAssignmentFactory(depot=depot_ok, facility=facility_ok)
+    DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
+
+    monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1")
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
+
+    def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
+        _ = optimizer_client
+        if float(payload.get("depot_lat", 0.0)) > 24.9:
+            raise RuntimeError("optimizer exploded")
+        return {
+            "status": "optimal",
+            "routes": [
+                {
+                    "vehicle_index": 0,
+                    "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
+                    "distance_km": 24.0,
+                    "cost": 48.0,
+                }
+            ],
+            "total_distance_km": 24.0,
+            "total_cost": 48.0,
+            "vehicles_used": 1,
+            "solver_time_ms": 20.0,
+            "baseline_cost": 60.0,
+            "cost_reduction_pct": 20.0,
+        }
+
+    monkeypatch.setattr("fuelsense.core.tasks._run_optimizer", _run_optimizer)
+
+    result = tasks.run_planning_cycle()
+    assert result["deliveries_created"] == 1
+    assert result["failed_depots"] == 1
+    assert result["partial_success"] is True
+    assert DeliveryItem.objects.filter(facility=facility_ok).count() == 1
+    assert DeliveryItem.objects.filter(facility=facility_fail).count() == 0
+
+
+@pytest.mark.django_db
 def test_daily_tick_dispatches_chord_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     FacilityFactory(is_active=True)
     monkeypatch.setenv("FUELSENSE_ENABLE_DAILY_TICK", "1")
