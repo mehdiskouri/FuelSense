@@ -3,6 +3,19 @@
 <img src="data:image/png;base64,{{ facility_chart_b64 }}" alt="Facility chart" style="max-width:100%;height:auto;" />
 {% endif %}
 
+{% if forecast_model_version %}
+<p>Latest forecast model: <strong>{{ forecast_model_version }}</strong></p>
+{% if forecast_is_fallback %}
+<p><strong>Forecast source is fallback-local; values may be conservative placeholders.</strong></p>
+{% endif %}
+{% if forecast_is_stale %}
+<p><strong>Forecast may be stale ({{ forecast_stale_days }} days old).</strong></p>
+{% endif %}
+{% if forecast_skipped_points %}
+<p>Skipped malformed forecast points: {{ forecast_skipped_points }}</p>
+{% endif %}
+{% endif %}
+
 {% if recent_alerts %}
 <h3>Recent Alerts</h3>
 <ul>
