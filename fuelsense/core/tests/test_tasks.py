@@ -191,8 +191,55 @@ def test_retrain_model_promotes_when_improved(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.django_db
 def test_retrain_model_skips_unsupported_type(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
-    result = tasks.retrain_model(None, "ANOMALY_DETECTOR")
+    result = tasks.retrain_model(None, "UNSUPPORTED")
     assert result["status"] == "skipped"
+
+
+@pytest.mark.django_db
+def test_retrain_model_promotes_anomaly_detector(monkeypatch: pytest.MonkeyPatch) -> None:
+    current = ModelRegistryFactory(
+        facility=None,
+        model_type="ANOMALY_DETECTOR",
+        is_active=True,
+        version=1,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
+
+    class _AnomalyTrainer:
+        def train_and_register(self, **kwargs: Any) -> dict[str, Any]:
+            _ = kwargs
+            return {
+                "run_id": "anomaly-run-2",
+                "f1": 0.82,
+                "classifier_accuracy": 0.9,
+            }
+
+    monkeypatch.setattr("ml_pipeline.anomaly_training.AnomalyTrainer", _AnomalyTrainer)
+
+    result = tasks.retrain_model(None, "ANOMALY_DETECTOR")
+    assert result["status"] == "promoted"
+    assert result["model_type"] == "ANOMALY_DETECTOR"
+
+    current.refresh_from_db()
+    assert current.is_active is False
+    promoted = ModelRegistry.objects.get(model_type="ANOMALY_DETECTOR", facility=None, is_active=True)
+    assert promoted.version == 2
+    assert promoted.mlflow_run_id == "anomaly-run-2"
+
+
+@pytest.mark.django_db
+def test_retrain_model_handles_anomaly_training_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
+
+    class _AnomalyTrainer:
+        def train_and_register(self, **kwargs: Any) -> dict[str, Any]:
+            _ = kwargs
+            raise RuntimeError("anomaly train failed")
+
+    monkeypatch.setattr("ml_pipeline.anomaly_training.AnomalyTrainer", _AnomalyTrainer)
+    result = tasks.retrain_model(None, "ANOMALY_DETECTOR")
+    assert result["status"] == "failed"
 
 
 @pytest.mark.django_db

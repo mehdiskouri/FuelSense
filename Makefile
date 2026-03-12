@@ -53,7 +53,7 @@ migrate: ## Apply Django migrations
 seed: ## Generate synthetic data
 	python manage.py generate_synthetic_data --facilities 50 --days 365 --seed 42
 
-train-all: ## Trigger model training pipeline
+train-all: ## Trigger async model training pipeline (use --wait via manage.py for blocking mode)
 	python manage.py train_models
 
 bench-forecaster: ## Run CPU and GPU forecaster benchmarks

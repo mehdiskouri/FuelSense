@@ -434,9 +434,18 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
     if os.environ.get("FUELSENSE_ENABLE_TRAINING_TASKS", "0") != "1":
         return {"facility_id": facility_id, "model_type": model_type, "status": "disabled"}
 
-    if model_type != "DEMAND_FORECAST":
-        logger.info("retrain_model skipped for unsupported model type", extra={"model_type": model_type})
-        return {"facility_id": facility_id, "model_type": model_type, "status": "skipped"}
+    if model_type == ModelRegistry.ModelType.DEMAND_FORECAST:
+        return _retrain_demand_forecast_model(facility_id)
+
+    if model_type == ModelRegistry.ModelType.ANOMALY_DETECTOR:
+        return _retrain_anomaly_detector_model()
+
+    logger.info("retrain_model skipped for unsupported model type", extra={"model_type": model_type})
+    return {"facility_id": facility_id, "model_type": model_type, "status": "skipped"}
+
+
+def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
+    model_type = ModelRegistry.ModelType.DEMAND_FORECAST
 
     from ml_pipeline.training import ForecastTrainer
 
@@ -506,6 +515,58 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
         "status": status,
         "test_rmse": float(result["test_rmse"]),
         "run_id": str(result["run_id"]),
+    }
+
+
+def _retrain_anomaly_detector_model() -> dict[str, Any]:
+    model_type = ModelRegistry.ModelType.ANOMALY_DETECTOR
+    from ml_pipeline.anomaly_training import AnomalyTrainer
+
+    trainer = AnomalyTrainer()
+    try:
+        result = trainer.train_and_register()
+    except Exception as exc:
+        logger.warning("anomaly retrain failed", extra={"error": str(exc)})
+        return {
+            "facility_id": None,
+            "model_type": model_type,
+            "status": "failed",
+            "error": str(exc),
+        }
+
+    ModelRegistry.objects.filter(model_type=model_type, facility_id=None, is_active=True).update(is_active=False)
+    max_version = (
+        ModelRegistry.objects.filter(model_type=model_type, facility_id=None).aggregate(v=Max("version")).get("v") or 0
+    )
+    ModelRegistry.objects.create(
+        model_type=model_type,
+        facility_id=None,
+        mlflow_run_id=str(result["run_id"]),
+        version=int(max_version) + 1,
+        is_active=True,
+        trained_at=timezone.now(),
+        training_rmse=None,
+        validation_rmse=None,
+        drift_ratio=1.0,
+        last_drift_check=None,
+    )
+
+    logger.info(
+        "anomaly retrain completed",
+        extra={
+            "model_type": model_type,
+            "status": "promoted",
+            "f1": float(result.get("f1", 0.0)),
+            "classifier_accuracy": float(result.get("classifier_accuracy", 0.0)),
+        },
+    )
+    return {
+        "facility_id": None,
+        "model_type": model_type,
+        "status": "promoted",
+        "run_id": str(result["run_id"]),
+        "f1": float(result.get("f1", 0.0)),
+        "classifier_accuracy": float(result.get("classifier_accuracy", 0.0)),
     }
 
 
