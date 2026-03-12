@@ -207,7 +207,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           load: true
-          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline') }}
+          push: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
       - name: Verify django runtime dependencies
         if: matrix.name == 'django'
@@ -233,7 +233,11 @@ jobs:
           category: trivy-${{ matrix.name }}
 
   deploy-staging:
-    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')
+    if: >-
+      always() && (
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-pipeline')) ||
+        (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+      )
     runs-on: ubuntu-latest
     needs: [build-images]
     steps:

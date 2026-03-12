@@ -137,7 +137,8 @@ class PlanningViewSet(viewsets.ViewSet):
 
         cycle = PlanningCycle.objects.create(
             trigger_type=trigger_type,
-            facilities_in_queue=len(facility_ids),
+            status=PlanningCycle.ExecutionStatus.QUEUED,
+            facilities_in_queue=len(facility_ids) if trigger_type == "EMERGENCY" else 0,
             deliveries_created=0,
             total_distance_km=0.0,
             total_cost=0.0,
@@ -147,12 +148,17 @@ class PlanningViewSet(viewsets.ViewSet):
         )
 
         if trigger_type == "EMERGENCY" and facility_ids:
-            for fid in facility_ids:
-                current_app.send_task("fuelsense.core.tasks.trigger_emergency_delivery", args=[fid])
+            current_app.send_task(
+                "fuelsense.core.tasks.run_emergency_planning_cycle",
+                kwargs={"cycle_id": cycle.id, "facility_ids": facility_ids},
+            )
         else:
-            current_app.send_task("fuelsense.core.tasks.run_planning_cycle")
+            current_app.send_task("fuelsense.core.tasks.run_planning_cycle", kwargs={"cycle_id": cycle.id})
 
-        return Response({"planning_cycle_id": cycle.id, "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+        return Response(
+            {"planning_cycle_id": cycle.id, "status": cycle.status},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=False, methods=["get"], url_path="history")
     def history(self, request: Request) -> Response:
