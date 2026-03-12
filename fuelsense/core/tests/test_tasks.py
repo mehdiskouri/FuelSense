@@ -679,6 +679,7 @@ def test_run_planning_cycle_parallel_partial_failure(monkeypatch: pytest.MonkeyP
     DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
 
     monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "0")
     monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
 
     def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
@@ -711,6 +712,104 @@ def test_run_planning_cycle_parallel_partial_failure(monkeypatch: pytest.MonkeyP
     assert result["partial_success"] is True
     assert DeliveryItem.objects.filter(facility=facility_ok).count() == 1
     assert DeliveryItem.objects.filter(facility=facility_fail).count() == 0
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_strict_mode_aborts_on_depot_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot_ok = DepotFactory(latitude=24.7, longitude=46.7)
+    depot_fail = DepotFactory(latitude=25.0, longitude=47.0)
+    VehicleFactory(depot=depot_ok, is_available=True)
+    VehicleFactory(depot=depot_fail, is_available=True)
+
+    facility_ok = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0, latitude=24.71, longitude=46.71)
+    facility_fail = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01)
+    DepotFacilityAssignmentFactory(depot=depot_ok, facility=facility_ok)
+    DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
+
+    monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "1")
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
+
+    def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
+        _ = optimizer_client
+        if float(payload.get("depot_lat", 0.0)) > 24.9:
+            raise RuntimeError("optimizer exploded")
+        return {
+            "status": "optimal",
+            "routes": [
+                {
+                    "vehicle_index": 0,
+                    "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
+                    "distance_km": 24.0,
+                    "cost": 48.0,
+                }
+            ],
+            "total_distance_km": 24.0,
+            "total_cost": 48.0,
+            "vehicles_used": 1,
+            "solver_time_ms": 20.0,
+            "baseline_cost": 60.0,
+            "cost_reduction_pct": 20.0,
+        }
+
+    monkeypatch.setattr("fuelsense.core.tasks._run_optimizer", _run_optimizer)
+
+    result = tasks.run_planning_cycle()
+    assert result["status"] == PlanningCycle.ExecutionStatus.FAILED
+    assert result["deliveries_created"] == 0
+    assert Delivery.objects.count() == 0
+    assert DeliveryItem.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_parallel_many_depots_stress(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_WORKERS", "8")
+    monkeypatch.setenv("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "1")
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
+
+    depots = []
+    facilities = []
+    for idx in range(20):
+        depot = DepotFactory(latitude=24.0 + (idx * 0.1), longitude=46.0 + (idx * 0.1))
+        VehicleFactory(depot=depot, is_available=True)
+        facility = FacilityFactory(
+            current_inventory=10.0,
+            dynamic_reorder_point=100.0,
+            latitude=24.01 + (idx * 0.1),
+            longitude=46.01 + (idx * 0.1),
+        )
+        DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+        depots.append(depot)
+        facilities.append(facility)
+
+    def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
+        _ = optimizer_client, payload
+        return {
+            "status": "optimal",
+            "routes": [
+                {
+                    "vehicle_index": 0,
+                    "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
+                    "distance_km": 20.0,
+                    "cost": 40.0,
+                }
+            ],
+            "total_distance_km": 20.0,
+            "total_cost": 40.0,
+            "vehicles_used": 1,
+            "solver_time_ms": 15.0,
+            "baseline_cost": 50.0,
+            "cost_reduction_pct": 20.0,
+        }
+
+    monkeypatch.setattr("fuelsense.core.tasks._run_optimizer", _run_optimizer)
+
+    result = tasks.run_planning_cycle()
+    assert result["failed_depots"] == 0
+    assert result["deliveries_created"] == 20
+    assert Delivery.objects.count() == 20
+    assert DeliveryItem.objects.count() == 20
 
 
 @pytest.mark.django_db

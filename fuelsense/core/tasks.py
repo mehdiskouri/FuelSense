@@ -764,6 +764,41 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                     optimizer_client.close()
         observe_planning_stage("optimizer_call", perf_counter() - optimize_start, trigger_type)
 
+        strict_mode = os.environ.get("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "1") == "1"
+        if strict_mode and failed_depots > 0:
+            if cycle is not None:
+                cycle.facilities_in_queue = len(queued_facilities)
+                cycle.deliveries_created = 0
+                cycle.total_distance_km = 0.0
+                cycle.total_cost = 0.0
+                cycle.solver_time_ms = 0.0
+                cycle.baseline_cost = 0.0
+                cycle.cost_reduction_pct = 0.0
+                cycle.status = PlanningCycle.ExecutionStatus.FAILED
+                cycle.completed_at = timezone.now()
+                cycle.save(
+                    update_fields=[
+                        "facilities_in_queue",
+                        "deliveries_created",
+                        "total_distance_km",
+                        "total_cost",
+                        "solver_time_ms",
+                        "baseline_cost",
+                        "cost_reduction_pct",
+                        "status",
+                        "completed_at",
+                    ]
+                )
+            return {
+                "queued": len(queued_facilities),
+                "planning_cycles": 0,
+                "deliveries_created": 0,
+                "failed_depots": failed_depots,
+                "partial_success": False,
+                "status": PlanningCycle.ExecutionStatus.FAILED,
+                "error": "strict_mode_depot_failure",
+            }
+
         persist_start = perf_counter()
         for depot_id, result in depot_results.items():
             job = depot_jobs[depot_id]

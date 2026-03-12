@@ -86,7 +86,7 @@ def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str
         )
         facility_index_map[idx] = int(facility.id)
 
-    cache_enabled = os.environ.get("FUELSENSE_ENABLE_ROUTING_MATRIX_CACHE", "1") == "1"
+    cache_enabled = os.environ.get("FUELSENSE_ENABLE_ROUTING_MATRIX_CACHE", "0") == "1"
     if cache_enabled:
         cache_key = _distance_matrix_cache_key(depot, facilities)
         cached_matrix = cache.get(cache_key)

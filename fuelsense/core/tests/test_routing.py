@@ -106,3 +106,54 @@ def test_build_optimizer_request_uses_distance_matrix_cache(monkeypatch: pytest.
     build_optimizer_request(depot, facilities)
     build_optimizer_request(depot, facilities)
     assert calls["count"] == 1
+
+
+@pytest.mark.django_db
+def test_build_optimizer_request_without_cache_recomputes(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory(latitude=24.7, longitude=46.7)
+    VehicleFactory(depot=depot, capacity=1000.0, cost_per_km=2.1, is_available=True)
+    facility = FacilityFactory(
+        latitude=24.8,
+        longitude=46.8,
+        current_inventory=200.0,
+        dynamic_reorder_point=350.0,
+        delivery_window_start=dt.time(8, 0),
+        delivery_window_end=dt.time(14, 0),
+    )
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+    monkeypatch.setenv("FUELSENSE_ENABLE_ROUTING_MATRIX_CACHE", "0")
+
+    calls = {"count": 0}
+    original = __import__("fuelsense.core.routing", fromlist=["_compute_distance_matrix"])._compute_distance_matrix
+
+    def _wrapped(coords: list[tuple[float, float]]) -> list[list[float]]:
+        calls["count"] += 1
+        return original(coords)
+
+    monkeypatch.setattr("fuelsense.core.routing._compute_distance_matrix", _wrapped)
+    build_optimizer_request(depot, [facility])
+    build_optimizer_request(depot, [facility])
+    assert calls["count"] == 2
+
+
+@pytest.mark.django_db
+def test_build_optimizer_request_large_facility_set_stress() -> None:
+    depot = DepotFactory(latitude=24.7, longitude=46.7)
+    VehicleFactory(depot=depot, capacity=1000.0, cost_per_km=2.1, is_available=True)
+    facilities = []
+    for idx in range(80):
+        facility = FacilityFactory(
+            latitude=24.0 + (idx * 0.01),
+            longitude=46.0 + (idx * 0.01),
+            current_inventory=100.0,
+            dynamic_reorder_point=200.0,
+            delivery_window_start=dt.time(8, 0),
+            delivery_window_end=dt.time(14, 0),
+        )
+        DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+        facilities.append(facility)
+
+    payload, mapping = build_optimizer_request(depot, facilities)
+    matrix = payload["distance_matrix"]
+    assert len(matrix) == 81
+    assert len(mapping) == 80
