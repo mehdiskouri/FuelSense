@@ -674,7 +674,9 @@ def test_run_planning_cycle_parallel_partial_failure(monkeypatch: pytest.MonkeyP
     VehicleFactory(depot=depot_fail, is_available=True)
 
     facility_ok = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0, latitude=24.71, longitude=46.71)
-    facility_fail = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01)
+    facility_fail = FacilityFactory(
+        current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01
+    )
     DepotFacilityAssignmentFactory(depot=depot_ok, facility=facility_ok)
     DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
 
@@ -722,7 +724,9 @@ def test_run_planning_cycle_strict_mode_aborts_on_depot_failure(monkeypatch: pyt
     VehicleFactory(depot=depot_fail, is_available=True)
 
     facility_ok = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0, latitude=24.71, longitude=46.71)
-    facility_fail = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01)
+    facility_fail = FacilityFactory(
+        current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01
+    )
     DepotFacilityAssignmentFactory(depot=depot_ok, facility=facility_ok)
     DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
 
@@ -1062,6 +1066,66 @@ def test_run_emergency_planning_cycle_marks_failed_on_exception(monkeypatch: pyt
 
 
 @pytest.mark.django_db
+def test_run_emergency_planning_cycle_partial_success_when_not_strict(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory()
+    VehicleFactory(depot=depot, is_available=True)
+    facility = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0)
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=2,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
+    monkeypatch.setenv("FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS", "0")
+
+    result = tasks.run_emergency_planning_cycle(cycle.id, [facility.id, 999999])
+    assert result["deliveries_created"] == 1
+    assert result["failed_facilities"] == 1
+    assert result["partial_success"] is True
+    cycle.refresh_from_db()
+    assert cycle.status == PlanningCycle.ExecutionStatus.COMPLETED
+
+
+@pytest.mark.django_db
+def test_run_emergency_planning_cycle_strict_failure_with_missing_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory()
+    VehicleFactory(depot=depot, is_available=True)
+    facility = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0)
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=2,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
+    monkeypatch.setenv("FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS", "1")
+
+    result = tasks.run_emergency_planning_cycle(cycle.id, [facility.id, 999999])
+    assert result["status"] == PlanningCycle.ExecutionStatus.FAILED
+    assert result["deliveries_created"] == 0
+    cycle.refresh_from_db()
+    assert cycle.status == PlanningCycle.ExecutionStatus.FAILED
+    assert Delivery.objects.filter(created_by_planning_cycle=cycle).count() == 0
+
+
+@pytest.mark.django_db
 def test_trigger_emergency_delivery_missing_assignment() -> None:
     result = tasks.trigger_emergency_delivery(999999)
     assert result["exists"] is False
@@ -1138,3 +1202,31 @@ def test_trigger_emergency_delivery_skips_invalid_route_entries(monkeypatch: pyt
     result = tasks.trigger_emergency_delivery(facility.id)
     assert result["exists"] is True
     assert result["deliveries_created"] == 0
+
+
+@pytest.mark.django_db
+def test_trigger_emergency_delivery_is_idempotent_for_same_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory()
+    VehicleFactory(depot=depot, is_available=True)
+    facility = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0)
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+        status=PlanningCycle.ExecutionStatus.RUNNING,
+        facilities_in_queue=1,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0")
+    first = tasks.trigger_emergency_delivery(facility.id, cycle_id=cycle.id)
+    second = tasks.trigger_emergency_delivery(facility.id, cycle_id=cycle.id)
+
+    assert first["deliveries_created"] == 1
+    assert second["deliveries_created"] == 0
+    assert Delivery.objects.filter(created_by_planning_cycle=cycle).count() == 1
+    assert DeliveryItem.objects.filter(delivery__created_by_planning_cycle=cycle).count() == 1

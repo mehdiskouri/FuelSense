@@ -25,14 +25,12 @@ class CPUForecaster(ComputeBackend):
 
     def __init__(self) -> None:
         cpu_count = max(os.cpu_count() or 1, 1)
-        default_threads = max(cpu_count - 1, 1)
+        default_threads = cpu_count
         threads = max(int(os.environ.get("FUELSENSE_FORECAST_CPU_THREADS", str(default_threads))), 1)
         torch.set_num_threads(threads)
         torch.set_float32_matmul_precision("medium")
-        default_workers = min(8, max(cpu_count // 2, 1))
-        self.train_num_workers = int(
-            os.environ.get("FUELSENSE_FORECAST_CPU_WORKERS", str(default_workers))
-        )
+        default_workers = min(max(cpu_count - 1, 1), 32)
+        self.train_num_workers = int(os.environ.get("FUELSENSE_FORECAST_CPU_WORKERS", str(default_workers)))
         self.model: DemandTCN | None = DemandTCN()
         self.model.eval()
         self.loss_fn = QuantileLoss()

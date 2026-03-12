@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from datetime import datetime
@@ -41,6 +43,24 @@ from fuelsense.core.metrics import observe_planning_stage
 from ml_pipeline.drift import DriftMonitor
 
 logger = logging.getLogger(__name__)
+
+
+def _default_parallel_workers() -> int:
+    # Use host capacity by default and cap by work items at call sites.
+    return max(os.cpu_count() or 1, 1)
+
+
+def _delivery_idempotency_key(
+    *,
+    cycle: PlanningCycle | None,
+    depot_id: int,
+    vehicle_id: int,
+    route: dict[str, Any],
+) -> str:
+    cycle_component = str(cycle.id) if cycle is not None else "adhoc"
+    route_blob = json.dumps(route, sort_keys=True, separators=(",", ":"))
+    payload = f"{cycle_component}|{depot_id}|{vehicle_id}|{route_blob}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _remote_required() -> bool:
@@ -161,33 +181,36 @@ def _materialize_delivery_routes(
     cycle: PlanningCycle | None,
     solver_time_ms: float,
 ) -> int:
-    delivery_payloads: list[dict[str, Any]] = []
-    delivery_rows: list[Delivery] = []
+    created_count = 0
+    item_rows: list[DeliveryItem] = []
     for route in routes:
         vehicle_idx = int(route.get("vehicle_index", 0))
         if vehicle_idx < 0 or vehicle_idx >= len(vehicles):
             continue
-        delivery_payloads.append(route)
-        delivery_rows.append(
-            Delivery(
-                depot=depot,
-                vehicle=vehicles[vehicle_idx],
-                planned_date=timezone.localdate(),
-                status=Delivery.Status.PLANNED,
-                total_distance_km=float(route.get("distance_km", 0.0)),
-                total_cost=float(route.get("cost", 0.0)),
-                route_json=route,
-                solver_time_ms=solver_time_ms,
-                created_by_planning_cycle=cycle,
-            )
+        vehicle = vehicles[vehicle_idx]
+        key = _delivery_idempotency_key(
+            cycle=cycle,
+            depot_id=int(depot.id),
+            vehicle_id=int(vehicle.id),
+            route=route,
         )
-
-    if not delivery_rows:
-        return 0
-
-    created_deliveries = Delivery.objects.bulk_create(delivery_rows)
-    item_rows: list[DeliveryItem] = []
-    for delivery, route in zip(created_deliveries, delivery_payloads, strict=False):
+        delivery, created = Delivery.objects.get_or_create(
+            idempotency_key=key,
+            defaults={
+                "depot": depot,
+                "vehicle": vehicle,
+                "planned_date": timezone.localdate(),
+                "status": Delivery.Status.PLANNED,
+                "total_distance_km": float(route.get("distance_km", 0.0)),
+                "total_cost": float(route.get("cost", 0.0)),
+                "route_json": route,
+                "solver_time_ms": solver_time_ms,
+                "created_by_planning_cycle": cycle,
+            },
+        )
+        if not created:
+            continue
+        created_count += 1
         for stop in list(route.get("stops", [])):
             if not isinstance(stop, dict):
                 continue
@@ -207,7 +230,7 @@ def _materialize_delivery_routes(
 
     if item_rows:
         DeliveryItem.objects.bulk_create(item_rows)
-    return len(created_deliveries)
+    return created_count
 
 
 def _fallback_reorder_point_from_recent_consumption(facility: Facility) -> float:
@@ -721,8 +744,8 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
 
         optimize_start = perf_counter()
         depot_results: dict[int, dict[str, Any]] = {}
-        parallel_enabled = os.environ.get("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "0") == "1"
-        max_workers_env = int(os.environ.get("FUELSENSE_PLANNING_PARALLEL_WORKERS", "4"))
+        parallel_enabled = os.environ.get("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1") == "1"
+        max_workers_env = int(os.environ.get("FUELSENSE_PLANNING_PARALLEL_WORKERS", str(_default_parallel_workers())))
         max_workers = max(1, min(max_workers_env, len(depot_jobs) or 1))
 
         if parallel_enabled and len(depot_jobs) > 1:
@@ -737,10 +760,14 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                         result = future.result()
                     except Exception:
                         failed_depots += 1
-                        logger.exception("optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id})
+                        logger.exception(
+                            "optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+                        )
                         continue
-                    depot_results[depot_id] = result if isinstance(result, dict) else _fallback_optimizer_response(
-                        depot_jobs[depot_id]["payload"]
+                    depot_results[depot_id] = (
+                        result
+                        if isinstance(result, dict)
+                        else _fallback_optimizer_response(depot_jobs[depot_id]["payload"])
                     )
         else:
             optimizer_client: httpx.Client | None = None
@@ -756,8 +783,8 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                             "optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
                         )
                         continue
-                    depot_results[depot_id] = result if isinstance(result, dict) else _fallback_optimizer_response(
-                        job["payload"]
+                    depot_results[depot_id] = (
+                        result if isinstance(result, dict) else _fallback_optimizer_response(job["payload"])
                     )
             finally:
                 if optimizer_client is not None and hasattr(optimizer_client, "close"):
@@ -849,7 +876,9 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                 total_baseline += float(result.get("baseline_cost", 0.0))
             except Exception:
                 failed_depots += 1
-                logger.exception("persisting planning results failed", extra={"depot_id": depot_id, "cycle_id": cycle_id})
+                logger.exception(
+                    "persisting planning results failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+                )
         observe_planning_stage("persist", perf_counter() - persist_start, trigger_type)
 
         if cycle is not None:
@@ -932,54 +961,186 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
     total_solver_time = 0.0
     total_baseline = 0.0
     trigger_type = PlanningCycle.TriggerType.EMERGENCY
+    failed_facilities = 0
 
     try:
+        strict_mode = os.environ.get("FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS", "1") == "1"
+        request_build_start = perf_counter()
+        assignments = (
+            DepotFacilityAssignment.objects.filter(facility_id__in=facility_ids)
+            .select_related("depot", "facility")
+            .order_by("facility_id")
+        )
+        assignment_map: dict[int, DepotFacilityAssignment] = {int(a.facility_id): a for a in assignments}
+        missing_facility_ids = [int(fid) for fid in facility_ids if int(fid) not in assignment_map]
+        failed_facilities += len(missing_facility_ids)
+
+        facility_jobs: dict[int, dict[str, Any]] = {}
+        for facility_id, assignment in assignment_map.items():
+            payload, facility_index_map = build_optimizer_request(assignment.depot, [assignment.facility])
+            facility_jobs[facility_id] = {
+                "assignment": assignment,
+                "payload": payload,
+                "facility_index_map": facility_index_map,
+            }
+        observe_planning_stage("request_build", perf_counter() - request_build_start, trigger_type)
+
         optimizer_stage_start = perf_counter()
-        parallel_enabled = os.environ.get("FUELSENSE_EMERGENCY_PARALLEL", "0") == "1"
-        if parallel_enabled and len(facility_ids) > 1:
-            max_workers_env = int(os.environ.get("FUELSENSE_EMERGENCY_PARALLEL_WORKERS", "4"))
-            max_workers = max(1, min(max_workers_env, len(facility_ids)))
+        parallel_enabled = os.environ.get("FUELSENSE_EMERGENCY_PARALLEL", "1") == "1"
+        max_workers_env = int(os.environ.get("FUELSENSE_EMERGENCY_PARALLEL_WORKERS", str(_default_parallel_workers())))
+        max_workers = max(1, min(max_workers_env, len(facility_jobs) or 1))
+        facility_results: dict[int, dict[str, Any]] = {}
+
+        if parallel_enabled and len(facility_jobs) > 1:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
-                    executor.submit(
-                        trigger_emergency_delivery,
-                        facility_id=facility_id,
-                        cycle_id=cycle_id,
-                        optimizer_client=None,
-                    ): facility_id
-                    for facility_id in facility_ids
+                    executor.submit(_run_optimizer, job["payload"], None): facility_id
+                    for facility_id, job in facility_jobs.items()
                 }
                 for future in as_completed(futures):
-                    result = future.result()
-                    total_deliveries += int(result.get("deliveries_created", 0))
-                    total_distance += float(result.get("total_distance_km", 0.0))
-                    total_cost += float(result.get("total_cost", 0.0))
-                    total_solver_time += float(result.get("solver_time_ms", 0.0))
-                    total_baseline += float(result.get("baseline_cost", 0.0))
+                    facility_id = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception:
+                        failed_facilities += 1
+                        logger.exception(
+                            "emergency optimizer execution failed",
+                            extra={"facility_id": facility_id, "cycle_id": cycle_id},
+                        )
+                        continue
+                    facility_results[facility_id] = (
+                        result
+                        if isinstance(result, dict)
+                        else _fallback_optimizer_response(facility_jobs[facility_id]["payload"])
+                    )
         else:
             optimizer_client: httpx.Client | None = None
             if os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1":
                 optimizer_client = httpx.Client(timeout=20.0)
             try:
-                for facility_id in facility_ids:
-                    result = trigger_emergency_delivery(
-                        facility_id=facility_id,
-                        cycle_id=cycle_id,
-                        optimizer_client=optimizer_client,
+                for facility_id, job in facility_jobs.items():
+                    try:
+                        result = _run_optimizer(job["payload"], optimizer_client=optimizer_client)
+                    except Exception:
+                        failed_facilities += 1
+                        logger.exception(
+                            "emergency optimizer execution failed",
+                            extra={"facility_id": facility_id, "cycle_id": cycle_id},
+                        )
+                        continue
+                    facility_results[facility_id] = (
+                        result if isinstance(result, dict) else _fallback_optimizer_response(job["payload"])
                     )
-                    total_deliveries += int(result.get("deliveries_created", 0))
-                    total_distance += float(result.get("total_distance_km", 0.0))
-                    total_cost += float(result.get("total_cost", 0.0))
-                    total_solver_time += float(result.get("solver_time_ms", 0.0))
-                    total_baseline += float(result.get("baseline_cost", 0.0))
             finally:
                 if optimizer_client is not None and hasattr(optimizer_client, "close"):
                     optimizer_client.close()
         observe_planning_stage("optimizer_call", perf_counter() - optimizer_stage_start, trigger_type)
 
+        if strict_mode and failed_facilities > 0:
+            PlanningCycle.objects.filter(id=cycle_id).update(
+                facilities_in_queue=len(facility_ids),
+                deliveries_created=0,
+                total_distance_km=0.0,
+                total_cost=0.0,
+                solver_time_ms=0.0,
+                baseline_cost=0.0,
+                cost_reduction_pct=0.0,
+                status=PlanningCycle.ExecutionStatus.FAILED,
+                completed_at=timezone.now(),
+            )
+            return {
+                "cycle_id": cycle_id,
+                "facilities_in_queue": len(facility_ids),
+                "deliveries_created": 0,
+                "failed_facilities": failed_facilities,
+                "partial_success": False,
+                "status": PlanningCycle.ExecutionStatus.FAILED,
+                "error": "strict_mode_facility_failure",
+            }
+
+        persist_start = perf_counter()
+        if strict_mode:
+            try:
+                with transaction.atomic():
+                    for facility_id, result in facility_results.items():
+                        job = facility_jobs[facility_id]
+                        assignment = job["assignment"]
+                        facility_index_map = job["facility_index_map"]
+                        routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
+                        vehicles = list(assignment.depot.vehicles.filter(is_available=True).order_by("id"))
+                        created_for_facility = _materialize_delivery_routes(
+                            depot=assignment.depot,
+                            routes=routes,
+                            vehicles=vehicles,
+                            facility_index_map=facility_index_map,
+                            cycle=cycle,
+                            solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+                        )
+                        total_deliveries += created_for_facility
+                        total_distance += float(result.get("total_distance_km", 0.0))
+                        total_cost += float(result.get("total_cost", 0.0))
+                        total_solver_time += float(result.get("solver_time_ms", 0.0))
+                        total_baseline += float(result.get("baseline_cost", 0.0))
+            except Exception:
+                logger.exception("emergency persistence failed", extra={"cycle_id": cycle_id})
+                PlanningCycle.objects.filter(id=cycle_id).update(
+                    facilities_in_queue=len(facility_ids),
+                    deliveries_created=0,
+                    total_distance_km=0.0,
+                    total_cost=0.0,
+                    solver_time_ms=0.0,
+                    baseline_cost=0.0,
+                    cost_reduction_pct=0.0,
+                    status=PlanningCycle.ExecutionStatus.FAILED,
+                    completed_at=timezone.now(),
+                )
+                return {
+                    "cycle_id": cycle_id,
+                    "facilities_in_queue": len(facility_ids),
+                    "deliveries_created": 0,
+                    "failed_facilities": max(failed_facilities, 1),
+                    "partial_success": False,
+                    "status": PlanningCycle.ExecutionStatus.FAILED,
+                    "error": "strict_mode_persist_failure",
+                }
+        else:
+            for facility_id, result in facility_results.items():
+                job = facility_jobs[facility_id]
+                assignment = job["assignment"]
+                facility_index_map = job["facility_index_map"]
+                routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
+                try:
+                    with transaction.atomic():
+                        vehicles = list(assignment.depot.vehicles.filter(is_available=True).order_by("id"))
+                        created_for_facility = _materialize_delivery_routes(
+                            depot=assignment.depot,
+                            routes=routes,
+                            vehicles=vehicles,
+                            facility_index_map=facility_index_map,
+                            cycle=cycle,
+                            solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+                        )
+                        total_deliveries += created_for_facility
+                        total_distance += float(result.get("total_distance_km", 0.0))
+                        total_cost += float(result.get("total_cost", 0.0))
+                        total_solver_time += float(result.get("solver_time_ms", 0.0))
+                        total_baseline += float(result.get("baseline_cost", 0.0))
+                except Exception:
+                    failed_facilities += 1
+                    logger.exception(
+                        "emergency persistence failed",
+                        extra={"facility_id": facility_id, "cycle_id": cycle_id},
+                    )
+        observe_planning_stage("persist", perf_counter() - persist_start, trigger_type)
+
         reduction = 0.0
         if total_baseline > 0.0:
             reduction = max((total_baseline - total_cost) / total_baseline * 100.0, 0.0)
+        status = (
+            PlanningCycle.ExecutionStatus.FAILED
+            if failed_facilities > 0 and total_deliveries == 0
+            else PlanningCycle.ExecutionStatus.COMPLETED
+        )
         PlanningCycle.objects.filter(id=cycle_id).update(
             facilities_in_queue=len(facility_ids),
             deliveries_created=total_deliveries,
@@ -988,14 +1149,15 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
             solver_time_ms=total_solver_time,
             baseline_cost=total_baseline,
             cost_reduction_pct=reduction,
-            status=PlanningCycle.ExecutionStatus.COMPLETED,
+            status=status,
             completed_at=timezone.now(),
         )
-        observe_planning_stage("persist", 0.0, trigger_type)
         return {
             "cycle_id": cycle_id,
             "facilities_in_queue": len(facility_ids),
             "deliveries_created": total_deliveries,
+            "failed_facilities": failed_facilities,
+            "partial_success": failed_facilities > 0 and total_deliveries > 0,
         }
     except Exception as exc:
         PlanningCycle.objects.filter(id=cycle_id).update(

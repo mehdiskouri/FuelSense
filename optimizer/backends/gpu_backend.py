@@ -17,14 +17,18 @@ from fuelsense_common.registry import register_backend
 @register_backend("route_optimizer", DeviceType.CUDA)
 class CUDARouteOptimizer(ComputeBackend):
     device = DeviceType.CUDA
-    N_PARALLEL = 64
-    MAX_ITERATIONS = 1000
+    DEFAULT_N_PARALLEL = 64
+    DEFAULT_MAX_ITERATIONS = 1000
 
     def __init__(self) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA backend requested but CUDA is not available")
         self.cuda_device = torch.device("cuda:0")
         self.time_limit_ms = int(os.environ.get("FUELSENSE_OPTIMIZER_TIME_LIMIT_MS", "10000"))
+        self.n_parallel = int(os.environ.get("FUELSENSE_OPTIMIZER_N_PARALLEL", str(self.DEFAULT_N_PARALLEL)))
+        self.max_iterations = int(
+            os.environ.get("FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS", str(self.DEFAULT_MAX_ITERATIONS))
+        )
         # Optional bound for 2-opt neighborhood width. 0 disables pruning.
         self.max_swap_span = int(os.environ.get("FUELSENSE_OPTIMIZER_MAX_SWAP_SPAN", "0"))
 
@@ -57,7 +61,7 @@ class CUDARouteOptimizer(ComputeBackend):
             "gpu_memory_free_gb": float(mem_free / (1024**3)),
             "gpu_memory_total_gb": float(mem_total / (1024**3)),
             "solver": "cuda-2opt",
-            "n_parallel": self.N_PARALLEL,
+            "n_parallel": self.n_parallel,
         }
         try:
             import pynvml
@@ -150,14 +154,14 @@ class CUDARouteOptimizer(ComputeBackend):
             }
 
         dist = torch.as_tensor(distance_matrix, dtype=torch.float32, device=self.cuda_device)
-        routes = self._nearest_neighbor_init(dist, self.N_PARALLEL)
+        routes = self._nearest_neighbor_init(dist, self.n_parallel)
         costs = self._route_cost_batch(routes, dist)
         best_idx = int(torch.argmin(costs).item())
         best_route = routes[best_idx].clone()
         best_cost = float(costs[best_idx].item())
 
         no_improve = 0
-        for _ in range(self.MAX_ITERATIONS):
+        for _ in range(self.max_iterations):
             if (perf_counter() - start) * 1000 > self.time_limit_ms:
                 break
 
