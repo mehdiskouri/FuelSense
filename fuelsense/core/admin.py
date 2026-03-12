@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import base64
+import logging
+import math
+from datetime import timedelta
 from io import BytesIO
 
 import matplotlib
@@ -32,12 +35,64 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 
+logger = logging.getLogger(__name__)
+
+
 def _figure_to_base64() -> str:
     buf = BytesIO()
     plt.tight_layout()
     plt.savefig(buf, format="png")
     plt.close()
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list[float], int]:
+    if not isinstance(forecast.predictions_json, list):
+        return [], [], 0
+
+    timestamps: list[object] = []
+    values: list[float] = []
+    skipped_points = 0
+
+    for idx, raw in enumerate(forecast.predictions_json, start=1):
+        if not isinstance(raw, dict):
+            skipped_points += 1
+            continue
+
+        raw_day = raw.get("day", idx)
+        try:
+            day_offset = int(raw_day)
+        except (TypeError, ValueError):
+            day_offset = idx
+        if day_offset < 1:
+            day_offset = idx
+
+        raw_p50 = raw.get("p50")
+        try:
+            p50_value = float(raw_p50)
+        except (TypeError, ValueError):
+            skipped_points += 1
+            continue
+        if not math.isfinite(p50_value):
+            skipped_points += 1
+            continue
+
+        timestamps.append(forecast.created_at + timedelta(days=day_offset))
+        values.append(p50_value)
+
+    expected_horizon = int(getattr(forecast, "horizon_days", 0) or 0)
+    if expected_horizon > 0 and len(values) != expected_horizon:
+        logger.warning(
+            "forecast horizon mismatch",
+            extra={
+                "forecast_id": forecast.id,
+                "expected_horizon": expected_horizon,
+                "valid_points": len(values),
+                "skipped_points": skipped_points,
+            },
+        )
+
+    return timestamps, values, skipped_points
 
 
 class InventoryLogInline(admin.TabularInline):
@@ -80,6 +135,24 @@ class FacilityAdmin(admin.ModelAdmin):
         extra_context = extra_context or {}
         facility = Facility.objects.filter(pk=object_id).first()
         if facility:
+            latest_forecast = facility.forecasts.order_by("-created_at").first()
+            extra_context["forecast_model_version"] = None
+            extra_context["forecast_is_fallback"] = False
+            extra_context["forecast_is_stale"] = False
+            extra_context["forecast_stale_days"] = 0
+            extra_context["forecast_skipped_points"] = 0
+
+            forecast_timestamps: list[object] = []
+            forecast_values: list[float] = []
+            if latest_forecast:
+                forecast_timestamps, forecast_values, skipped_points = _extract_forecast_p50_points(latest_forecast)
+                forecast_age_days = max((timezone.now() - latest_forecast.created_at).days, 0)
+                extra_context["forecast_model_version"] = latest_forecast.model_version
+                extra_context["forecast_is_fallback"] = latest_forecast.model_version == "fallback-local"
+                extra_context["forecast_is_stale"] = forecast_age_days > 7
+                extra_context["forecast_stale_days"] = forecast_age_days
+                extra_context["forecast_skipped_points"] = skipped_points
+
             logs = facility.inventory_logs.order_by("-timestamp")[:30]
             logs = list(reversed(logs))
             if logs:
@@ -87,18 +160,8 @@ class FacilityAdmin(admin.ModelAdmin):
                 x = [log.timestamp for log in logs]
                 plt.plot(x, [log.consumption for log in logs], label="Consumption")
                 plt.plot(x, [log.inventory_level for log in logs], label="Inventory")
-                latest_forecast = facility.forecasts.order_by("-created_at").first()
-                if latest_forecast and isinstance(latest_forecast.predictions_json, list):
-                    forecast_values = [
-                        row.get("p50") for row in latest_forecast.predictions_json if isinstance(row, dict)
-                    ]
-                    if forecast_values:
-                        plt.plot(
-                            [x[-1] for _ in forecast_values],
-                            forecast_values,
-                            "o",
-                            label="Forecast p50",
-                        )
+                if forecast_timestamps and forecast_values:
+                    plt.plot(forecast_timestamps, forecast_values, "o-", label="Forecast p50")
                 plt.legend()
                 extra_context["facility_chart_b64"] = _figure_to_base64()
             extra_context["recent_alerts"] = facility.alerts.order_by("-timestamp")[:10]
