@@ -19,6 +19,16 @@ class ORToolsOptimizer(ComputeBackend):
 
     def __init__(self) -> None:
         self.time_limit_ms = int(os.environ.get("FUELSENSE_OPTIMIZER_TIME_LIMIT_MS", "10000"))
+        self.adaptive_time_limit = os.environ.get("FUELSENSE_OPTIMIZER_ADAPTIVE_TIME_LIMIT", "1") == "1"
+
+    def _effective_time_limit_ms(self, n_nodes: int) -> int:
+        if not self.adaptive_time_limit:
+            return self.time_limit_ms
+        if n_nodes <= 20:
+            return min(self.time_limit_ms, 2000)
+        if n_nodes <= 50:
+            return min(self.time_limit_ms, 6000)
+        return self.time_limit_ms
 
     def warmup(self) -> None:
         return None
@@ -74,18 +84,22 @@ class ORToolsOptimizer(ComputeBackend):
         vehicle_costs = [float(v.get("cost_per_km", 1.0)) for v in vehicles]
         capacities = [max(int(round(float(v.get("capacity", 0.0)) * demand_scale)), 0) for v in vehicles]
 
-        def distance_km(from_node: int, to_node: int) -> float:
-            return float(distance_matrix[from_node][to_node])
+        dist_cost_units = [
+            [int(round(float(distance_matrix[i][j]) * 100.0)) for j in range(n_nodes)] for i in range(n_nodes)
+        ]
+        travel_minutes = [[int(round(float(distance_matrix[i][j]))) for j in range(n_nodes)] for i in range(n_nodes)]
+        vehicle_cost_scale = [int(round(cost * 100.0)) for cost in vehicle_costs]
 
-        for vehicle_idx, cost_per_km in enumerate(vehicle_costs):
+        for vehicle_idx in range(len(vehicle_costs)):
 
-            def cost_callback(from_index: int, to_index: int, _cost: float = cost_per_km) -> int:
+            def cost_callback(from_index: int, to_index: int, vehicle_pos: int = vehicle_idx) -> int:
                 try:
                     from_node = manager.IndexToNode(int(from_index))
                     to_node = manager.IndexToNode(int(to_index))
                 except OverflowError:  # pragma: no cover
                     return 0
-                return int(round(distance_km(from_node, to_node) * _cost * 100.0))
+                scaled_cost = vehicle_cost_scale[vehicle_pos]
+                return int(round((dist_cost_units[from_node][to_node] * scaled_cost) / 100.0))
 
             callback_idx = routing.RegisterTransitCallback(cost_callback)
             routing.SetArcCostEvaluatorOfVehicle(callback_idx, vehicle_idx)
@@ -112,9 +126,9 @@ class ORToolsOptimizer(ComputeBackend):
                 to_node = manager.IndexToNode(int(to_index))
             except OverflowError:  # pragma: no cover
                 return 0
-            travel_minutes = int(round(distance_km(from_node, to_node)))
+            travel_time = travel_minutes[from_node][to_node]
             service_minutes = int(service_times.get(to_node, 0)) if to_node != 0 else 0
-            return travel_minutes + service_minutes
+            return travel_time + service_minutes
 
         time_callback_idx = routing.RegisterTransitCallback(time_callback)
         routing.AddDimension(
@@ -131,9 +145,12 @@ class ORToolsOptimizer(ComputeBackend):
             time_dim.CumulVar(idx).SetRange(max(start_min, 0), max(end_min, 0))
 
         params = pywrapcp.DefaultRoutingSearchParameters()
-        params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        if n_nodes <= 30:
+            params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        else:
+            params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION
         params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-        params.time_limit.FromMilliseconds(self.time_limit_ms)
+        params.time_limit.FromMilliseconds(self._effective_time_limit_ms(n_nodes))
 
         solution = routing.SolveWithParameters(params)
         solver_time_ms = (perf_counter() - start) * 1000
@@ -162,7 +179,7 @@ class ORToolsOptimizer(ComputeBackend):
                 node = manager.IndexToNode(index)
                 next_index = solution.Value(routing.NextVar(index))
                 next_node = manager.IndexToNode(next_index)
-                route_distance += distance_km(node, next_node)
+                route_distance += float(distance_matrix[node][next_node])
 
                 if node != 0:
                     arrival_min = int(solution.Value(time_dim.CumulVar(index)))

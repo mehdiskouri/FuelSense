@@ -114,7 +114,7 @@ def _fallback_optimizer_response(payload: dict[str, object]) -> dict[str, Any]:
     }
 
 
-def _run_optimizer(payload: dict[str, object]) -> dict[str, Any]:
+def _run_optimizer(payload: dict[str, object], optimizer_client: httpx.Client | None = None) -> dict[str, Any]:
     service_url = os.environ.get("OPTIMIZER_URL", "http://route-optimizer:8003").rstrip("/")
     endpoint = f"{service_url}/optimize"
     remote_enabled = os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1"
@@ -122,6 +122,16 @@ def _run_optimizer(payload: dict[str, object]) -> dict[str, Any]:
     if not remote_enabled:
         _handle_remote_unavailable("optimizer", "remote_disabled")
         return _fallback_optimizer_response(payload)
+
+    if optimizer_client is not None:
+        try:
+            response = optimizer_client.post(endpoint, json=payload)
+            response.raise_for_status()
+            body = response.json()
+            return body if isinstance(body, dict) else _fallback_optimizer_response(payload)
+        except httpx.HTTPError:
+            _handle_remote_unavailable("optimizer", "request_failed")
+            return _fallback_optimizer_response(payload)
 
     with httpx.Client(timeout=20.0) as client:
         try:
@@ -631,69 +641,83 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
         total_solver_time = 0.0
         total_baseline = 0.0
 
-        for depot_id, facilities in facilities_by_depot.items():
-            depot = depot_map[depot_id]
-            payload, facility_index_map = build_optimizer_request(depot, facilities)
-            result = _run_optimizer(payload)
-            routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
+        optimizer_client: httpx.Client | None = None
+        if os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1":
+            optimizer_client = httpx.Client(timeout=20.0)
 
-            cycle_for_delivery: PlanningCycle
-            if cycle is None:
-                now = timezone.now()
-                cycle_for_delivery = PlanningCycle.objects.create(
-                    trigger_type=PlanningCycle.TriggerType.SCHEDULED,
-                    status=PlanningCycle.ExecutionStatus.COMPLETED,
-                    started_at=now,
-                    completed_at=now,
-                    facilities_in_queue=len(facilities),
-                    deliveries_created=len(routes),
-                    total_distance_km=float(result.get("total_distance_km", 0.0)),
-                    total_cost=float(result.get("total_cost", 0.0)),
-                    solver_time_ms=float(result.get("solver_time_ms", 0.0)),
-                    baseline_cost=float(result.get("baseline_cost", 0.0)),
-                    cost_reduction_pct=float(result.get("cost_reduction_pct", 0.0)),
-                )
-                planning_cycles += 1
-            else:
-                cycle_for_delivery = cycle
+        try:
+            for depot_id, facilities in facilities_by_depot.items():
+                depot = depot_map[depot_id]
+                payload, facility_index_map = build_optimizer_request(depot, facilities)
+                result = _run_optimizer(payload, optimizer_client=optimizer_client)
+                routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
 
-            vehicles = list(depot.vehicles.filter(is_available=True).order_by("id"))
-            for route in routes:
-                vehicle_idx = int(route.get("vehicle_index", 0))
-                if vehicle_idx < 0 or vehicle_idx >= len(vehicles):
-                    continue
-                delivery = Delivery.objects.create(
-                    depot=depot,
-                    vehicle=vehicles[vehicle_idx],
-                    planned_date=timezone.localdate(),
-                    status=Delivery.Status.PLANNED,
-                    total_distance_km=float(route.get("distance_km", 0.0)),
-                    total_cost=float(route.get("cost", 0.0)),
-                    route_json=route,
-                    solver_time_ms=float(result.get("solver_time_ms", 0.0)),
-                    created_by_planning_cycle=cycle_for_delivery,
-                )
-                deliveries_created += 1
-
-                for stop in list(route.get("stops", [])):
-                    if not isinstance(stop, dict):
-                        continue
-                    facility_index = int(stop.get("facility_index", -1))
-                    facility_id = facility_index_map.get(facility_index)
-                    if facility_id is None:
-                        continue
-                    DeliveryItem.objects.create(
-                        delivery=delivery,
-                        facility_id=facility_id,
-                        quantity=float(stop.get("demand", 0.0)),
-                        planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
-                        sequence=int(stop.get("sequence", 1)),
+                cycle_for_delivery: PlanningCycle
+                if cycle is None:
+                    now = timezone.now()
+                    cycle_for_delivery = PlanningCycle.objects.create(
+                        trigger_type=PlanningCycle.TriggerType.SCHEDULED,
+                        status=PlanningCycle.ExecutionStatus.COMPLETED,
+                        started_at=now,
+                        completed_at=now,
+                        facilities_in_queue=len(facilities),
+                        deliveries_created=len(routes),
+                        total_distance_km=float(result.get("total_distance_km", 0.0)),
+                        total_cost=float(result.get("total_cost", 0.0)),
+                        solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+                        baseline_cost=float(result.get("baseline_cost", 0.0)),
+                        cost_reduction_pct=float(result.get("cost_reduction_pct", 0.0)),
                     )
+                    planning_cycles += 1
+                else:
+                    cycle_for_delivery = cycle
 
-            total_distance += float(result.get("total_distance_km", 0.0))
-            total_cost += float(result.get("total_cost", 0.0))
-            total_solver_time += float(result.get("solver_time_ms", 0.0))
-            total_baseline += float(result.get("baseline_cost", 0.0))
+                vehicles = list(depot.vehicles.filter(is_available=True).order_by("id"))
+                bulk_items: list[DeliveryItem] = []
+                for route in routes:
+                    vehicle_idx = int(route.get("vehicle_index", 0))
+                    if vehicle_idx < 0 or vehicle_idx >= len(vehicles):
+                        continue
+                    delivery = Delivery.objects.create(
+                        depot=depot,
+                        vehicle=vehicles[vehicle_idx],
+                        planned_date=timezone.localdate(),
+                        status=Delivery.Status.PLANNED,
+                        total_distance_km=float(route.get("distance_km", 0.0)),
+                        total_cost=float(route.get("cost", 0.0)),
+                        route_json=route,
+                        solver_time_ms=float(result.get("solver_time_ms", 0.0)),
+                        created_by_planning_cycle=cycle_for_delivery,
+                    )
+                    deliveries_created += 1
+
+                    for stop in list(route.get("stops", [])):
+                        if not isinstance(stop, dict):
+                            continue
+                        facility_index = int(stop.get("facility_index", -1))
+                        facility_id = facility_index_map.get(facility_index)
+                        if facility_id is None:
+                            continue
+                        bulk_items.append(
+                            DeliveryItem(
+                                delivery=delivery,
+                                facility_id=facility_id,
+                                quantity=float(stop.get("demand", 0.0)),
+                                planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
+                                sequence=int(stop.get("sequence", 1)),
+                            )
+                        )
+
+                if bulk_items:
+                    DeliveryItem.objects.bulk_create(bulk_items)
+
+                total_distance += float(result.get("total_distance_km", 0.0))
+                total_cost += float(result.get("total_cost", 0.0))
+                total_solver_time += float(result.get("solver_time_ms", 0.0))
+                total_baseline += float(result.get("baseline_cost", 0.0))
+        finally:
+            if optimizer_client is not None and hasattr(optimizer_client, "close"):
+                optimizer_client.close()
 
         if cycle is not None:
             reduction = 0.0
@@ -769,13 +793,25 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
     total_baseline = 0.0
 
     try:
-        for facility_id in facility_ids:
-            result = trigger_emergency_delivery(facility_id=facility_id, cycle_id=cycle_id)
-            total_deliveries += int(result.get("deliveries_created", 0))
-            total_distance += float(result.get("total_distance_km", 0.0))
-            total_cost += float(result.get("total_cost", 0.0))
-            total_solver_time += float(result.get("solver_time_ms", 0.0))
-            total_baseline += float(result.get("baseline_cost", 0.0))
+        optimizer_client: httpx.Client | None = None
+        if os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1":
+            optimizer_client = httpx.Client(timeout=20.0)
+
+        try:
+            for facility_id in facility_ids:
+                result = trigger_emergency_delivery(
+                    facility_id=facility_id,
+                    cycle_id=cycle_id,
+                    optimizer_client=optimizer_client,
+                )
+                total_deliveries += int(result.get("deliveries_created", 0))
+                total_distance += float(result.get("total_distance_km", 0.0))
+                total_cost += float(result.get("total_cost", 0.0))
+                total_solver_time += float(result.get("solver_time_ms", 0.0))
+                total_baseline += float(result.get("baseline_cost", 0.0))
+        finally:
+            if optimizer_client is not None and hasattr(optimizer_client, "close"):
+                optimizer_client.close()
 
         reduction = 0.0
         if total_baseline > 0.0:
@@ -805,7 +841,11 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
 
 
 @shared_task(queue="planning")
-def trigger_emergency_delivery(facility_id: int, cycle_id: int | None = None) -> dict[str, Any]:
+def trigger_emergency_delivery(
+    facility_id: int,
+    cycle_id: int | None = None,
+    optimizer_client: httpx.Client | None = None,
+) -> dict[str, Any]:
     assignment = (
         DepotFacilityAssignment.objects.filter(facility_id=facility_id).select_related("depot", "facility").first()
     )
@@ -813,7 +853,7 @@ def trigger_emergency_delivery(facility_id: int, cycle_id: int | None = None) ->
         return {"facility_id": facility_id, "exists": False}
 
     payload, facility_index_map = build_optimizer_request(assignment.depot, [assignment.facility])
-    result = _run_optimizer(payload)
+    result = _run_optimizer(payload, optimizer_client=optimizer_client)
     routes = [r for r in list(result.get("routes", [])) if isinstance(r, dict)]
 
     if cycle_id is None:
@@ -852,6 +892,7 @@ def trigger_emergency_delivery(facility_id: int, cycle_id: int | None = None) ->
             created_by_planning_cycle=cycle,
         )
         delivery_count += 1
+        bulk_items: list[DeliveryItem] = []
         for stop in list(route.get("stops", [])):
             if not isinstance(stop, dict):
                 continue
@@ -859,13 +900,17 @@ def trigger_emergency_delivery(facility_id: int, cycle_id: int | None = None) ->
             mapped_facility_id = facility_index_map.get(facility_index)
             if mapped_facility_id is None:
                 continue
-            DeliveryItem.objects.create(
-                delivery=delivery,
-                facility_id=mapped_facility_id,
-                quantity=float(stop.get("demand", 0.0)),
-                planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
-                sequence=int(stop.get("sequence", 1)),
+            bulk_items.append(
+                DeliveryItem(
+                    delivery=delivery,
+                    facility_id=mapped_facility_id,
+                    quantity=float(stop.get("demand", 0.0)),
+                    planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
+                    sequence=int(stop.get("sequence", 1)),
+                )
             )
+        if bulk_items:
+            DeliveryItem.objects.bulk_create(bulk_items)
 
     logger.info(
         "trigger_emergency_delivery completed",

@@ -6,6 +6,8 @@ import math
 from datetime import time
 from typing import Any
 
+import numpy as np
+
 from fuelsense.core.reorder import get_effective_reorder_point
 
 
@@ -49,13 +51,15 @@ def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str
         )
         facility_index_map[idx] = int(facility.id)
 
-    n = len(coords)
-    matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = _haversine(coords[i][0], coords[i][1], coords[j][0], coords[j][1])
-            matrix[i][j] = d
-            matrix[j][i] = d
+    coords_arr = np.asarray(coords, dtype=np.float64)
+    lat_rad = np.radians(coords_arr[:, 0])
+    lon_rad = np.radians(coords_arr[:, 1])
+    d_lat = lat_rad[:, None] - lat_rad[None, :]
+    d_lon = lon_rad[:, None] - lon_rad[None, :]
+    a = np.sin(d_lat / 2.0) ** 2 + np.cos(lat_rad)[:, None] * np.cos(lat_rad)[None, :] * np.sin(d_lon / 2.0) ** 2
+    a = np.clip(a, 0.0, 1.0)
+    c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a))
+    matrix = (6371.0 * c).tolist()
 
     vehicles = [
         {
