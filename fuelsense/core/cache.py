@@ -21,7 +21,7 @@ class DashboardKpis(TypedDict):
     deliveries_in_transit: int
 
 
-def _to_float(value: float | int | Decimal | None) -> float:
+def _to_float(value: float | Decimal | None) -> float:
     if value is None:
         return 0.0
     return float(value)
@@ -30,7 +30,7 @@ def _to_float(value: float | int | Decimal | None) -> float:
 def _is_dashboard_kpis(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
-    typed_payload = cast(dict[str, object], payload)
+    typed_payload = cast("dict[str, object]", payload)
     expected_keys = {
         "avg_delivery_cost_last_30d",
         "forecast_accuracy_rmse",
@@ -50,7 +50,7 @@ def get_or_set_facility_inventory(facility_id: int) -> float:
         return float(value)
 
     facility = Facility.objects.only("current_inventory").get(id=facility_id)
-    raw_inventory = cast(float | int | Decimal | None, getattr(facility, "current_inventory", None))
+    raw_inventory = cast("float | int | Decimal | None", getattr(facility, "current_inventory", None))
     value = _to_float(raw_inventory)
     cache.set(key, value, timeout=3600)
     return value
@@ -85,10 +85,10 @@ def get_or_set_dashboard_kpis() -> DashboardKpis:
 
     payload: DashboardKpis = {
         "avg_delivery_cost_last_30d": _to_float(
-            Delivery.objects.exclude(total_cost__isnull=True).aggregate(v=Avg("total_cost")).get("v")
+            Delivery.objects.exclude(total_cost__isnull=True).aggregate(v=Avg("total_cost")).get("v"),
         ),
         "forecast_accuracy_rmse": _to_float(
-            Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse")).get("v")
+            Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse")).get("v"),
         ),
         "anomaly_detection_rate": float(AnomalyAlert.objects.count() / max(InventoryLog.objects.count(), 1)),
         "unacknowledged_anomalies_count": int(AnomalyAlert.objects.filter(is_acknowledged=False).count()),
@@ -104,5 +104,5 @@ def invalidate_facility_cache(facility_id: int) -> None:
         [
             f"cache:facility:{facility_id}:latest_inventory",
             f"cache:facility:{facility_id}:reorder_status",
-        ]
+        ],
     )

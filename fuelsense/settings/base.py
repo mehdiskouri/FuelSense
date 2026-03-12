@@ -69,7 +69,7 @@ DATABASES = {
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", "fuelsense"),
         "HOST": os.getenv("POSTGRES_HOST", "localhost"),
         "PORT": os.getenv("POSTGRES_PORT", "5432"),
-    }
+    },
 }
 
 LANGUAGE_CODE = "en-us"
@@ -99,7 +99,7 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-    }
+    },
 }
 
 CELERY_BEAT_SCHEDULE = {
@@ -135,13 +135,13 @@ LOGGING = {
     "formatters": {
         "structured": {
             "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
-        }
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "structured",
-        }
+        },
     },
     "root": {
         "handlers": ["console"],

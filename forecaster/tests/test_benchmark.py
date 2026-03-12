@@ -59,7 +59,7 @@ def test_benchmark_main_json_output_with_mock_backend(
         _ = (name, device)
         return _Backend()
 
-    monkeypatch.setattr("forecaster.benchmark.get_backend", cast(Any, _mock_get_backend))
+    monkeypatch.setattr("forecaster.benchmark.get_backend", cast("Any", _mock_get_backend))
     monkeypatch.setattr(
         "sys.argv",
         ["benchmark", "--facilities", "10", "--device", "cpu", "--output", "json"],

@@ -9,13 +9,13 @@ from time import perf_counter
 
 import numpy as np
 
+import optimizer.backends  # noqa: F401
 from fuelsense_common.compute import DeviceType
 from fuelsense_common.registry import get_backend
-import optimizer.backends  # noqa: F401
 
 
 def _synthetic_problem(
-    stops: int, seed: int = 42
+    stops: int, seed: int = 42,
 ) -> tuple[list[dict[str, float]], list[dict[str, float | int]], list[list[float]]]:
     rng = np.random.default_rng(seed)
     coords = rng.uniform(0.0, 100.0, size=(stops + 1, 2)).astype(np.float32)
@@ -38,7 +38,7 @@ def _synthetic_problem(
                 "time_window_start": start_min,
                 "time_window_end": end_min,
                 "service_time": 30,
-            }
+            },
         )
     return vehicles, stop_list, matrix.tolist()
 
@@ -87,7 +87,7 @@ def main() -> None:
     print(
         f"{payload['backend']},{payload['status']},{payload['stops']},{payload['vehicles_used']},"
         f"{payload['total_cost']:.2f},{payload['baseline_cost']:.2f},"
-        f"{payload['cost_reduction_pct']:.2f},{payload['elapsed_ms']:.2f}"
+        f"{payload['cost_reduction_pct']:.2f},{payload['elapsed_ms']:.2f}",
     )
 
 

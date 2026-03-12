@@ -7,7 +7,6 @@ import torch
 from forecaster.backends.cpu_backend import CPUForecaster
 from forecaster.backends.gpu_backend import CUDAForecaster
 
-
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 
 

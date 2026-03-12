@@ -67,7 +67,7 @@ class AnomalyDetector:
             }
 
         vector = np.asarray(
-            [[self._feature_value(name, z_score, features) for name in self.feature_names]], dtype=np.float32
+            [[self._feature_value(name, z_score, features) for name in self.feature_names]], dtype=np.float32,
         )
 
         if self.forest is None or self.classifier is None:

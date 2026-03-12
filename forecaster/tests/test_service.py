@@ -89,7 +89,7 @@ async def test_predict_batch_contract() -> None:
         "requests": [
             {"facility_id": 1, "lookback": _valid_lookback()},
             {"facility_id": 2, "lookback": _valid_lookback()},
-        ]
+        ],
     }
 
     transport = ASGITransport(app=service.app)
@@ -148,7 +148,7 @@ async def test_predict_batch_rejects_non_finite_payload() -> None:
     payload = {
         "requests": [
             {"facility_id": 1, "lookback": bad},
-        ]
+        ],
     }
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

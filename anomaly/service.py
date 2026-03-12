@@ -43,7 +43,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         forest_path = os.environ.get("ANOMALY_IFOREST_PATH", "").strip()
         classifier_path = os.environ.get("ANOMALY_CLASSIFIER_PATH", "").strip()
         if forest_path and classifier_path and hasattr(detector, "load"):
-            cast(Any, detector).load(forest_path, classifier_path)
+            cast("Any", detector).load(forest_path, classifier_path)
     else:
         detector = None
 
@@ -59,7 +59,7 @@ def detect(request: AnomalyDetectRequest) -> AnomalyDetectResponse:
         raise HTTPException(status_code=503, detail="Anomaly detector unavailable")
 
     start = perf_counter()
-    result = cast(Any, detector).detect(
+    result = cast("Any", detector).detect(
         actual=request.actual_consumption,
         predicted=request.predicted_consumption,
         rolling_std=request.rolling_std,

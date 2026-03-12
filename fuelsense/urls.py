@@ -1,7 +1,7 @@
 """FuelSense URL configuration."""
 
-from django.core.cache import cache
 from django.contrib import admin
+from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
 from django.urls import include, path

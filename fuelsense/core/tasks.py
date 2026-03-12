@@ -4,13 +4,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
-import json
-import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
-from datetime import datetime
+from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Any
 
@@ -26,10 +25,12 @@ from fuelsense.core.features import (
     build_lookback_matrix,
     extract_training_data,
 )
+from fuelsense.core.metrics import observe_planning_stage
 from fuelsense.core.models import (
     AnomalyAlert,
     Delivery,
     DeliveryItem,
+    Depot,
     DepotFacilityAssignment,
     Facility,
     Forecast,
@@ -39,8 +40,9 @@ from fuelsense.core.models import (
 )
 from fuelsense.core.reorder import filter_below_reorder, is_reliable_reorder_point
 from fuelsense.core.routing import build_optimizer_request
-from fuelsense.core.metrics import observe_planning_stage
+from ml_pipeline.anomaly_training import AnomalyTrainer
 from ml_pipeline.drift import DriftMonitor
+from ml_pipeline.training import ForecastTrainer
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,8 @@ def _remote_required() -> bool:
 
 def _handle_remote_unavailable(service_name: str, reason: str) -> None:
     if _remote_required():
-        raise RuntimeError(f"{service_name} unavailable ({reason}) and FUELSENSE_REQUIRE_REMOTE_SERVICES=1")
+        message = f"{service_name} unavailable ({reason}) and FUELSENSE_REQUIRE_REMOTE_SERVICES=1"
+        raise RuntimeError(message)
     logger.warning("using fallback mode", extra={"service": service_name, "reason": reason})
 
 
@@ -124,11 +127,11 @@ def _fallback_optimizer_response(payload: dict[str, object]) -> dict[str, Any]:
                         "demand": float(stop.get("demand", 0.0)),
                         "arrival_min": int(stop.get("time_window_start", 0)),
                         "sequence": 1,
-                    }
+                    },
                 ],
                 "distance_km": route_distance,
                 "cost": route_cost,
-            }
+            },
         )
 
     return {
@@ -180,7 +183,7 @@ def _planned_arrival_for_minutes(arrival_min: int) -> datetime:
 
 def _materialize_delivery_routes(
     *,
-    depot: Any,
+    depot: Depot,
     routes: list[dict[str, Any]],
     vehicles: list[Any],
     facility_index_map: dict[int, int],
@@ -231,7 +234,7 @@ def _materialize_delivery_routes(
                     quantity=float(stop.get("demand", 0.0)),
                     planned_arrival=_planned_arrival_for_minutes(int(stop.get("arrival_min", 0))),
                     sequence=int(stop.get("sequence", 1)),
-                )
+                ),
             )
 
     if item_rows:
@@ -243,7 +246,7 @@ def _fallback_reorder_point_from_recent_consumption(facility: Facility) -> float
     recent_consumption = list(
         InventoryLog.objects.filter(facility_id=facility.id)
         .order_by("-timestamp")
-        .values_list("consumption", flat=True)[:7]
+        .values_list("consumption", flat=True)[:7],
     )
     if recent_consumption:
         avg_daily_consumption = sum(max(float(value), 0.0) for value in recent_consumption) / len(recent_consumption)
@@ -275,6 +278,7 @@ def _resolve_reorder_point_for_forecast(
 
 @shared_task(queue="default")
 def daily_tick() -> dict[str, Any]:
+    """Dispatch the daily ingestion, ML, and planning workflow."""
     facility_ids = list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
     if os.environ.get("FUELSENSE_ENABLE_DAILY_TICK", "0") != "1":
         return {"facility_count": len(facility_ids), "status": "disabled"}
@@ -302,6 +306,7 @@ def daily_tick() -> dict[str, Any]:
 
 @shared_task(queue="default")
 def ingest_hourly() -> dict[str, Any]:
+    """Emit hourly ingestion heartbeat metadata."""
     count = Facility.objects.filter(is_active=True).count()
     logger.info("ingest_hourly invoked", extra={"active_facilities": count})
     return {"active_facilities": count}
@@ -309,6 +314,7 @@ def ingest_hourly() -> dict[str, Any]:
 
 @shared_task(queue="default")
 def ingest_facility_data(facility_id: int) -> dict[str, Any]:
+    """Append one synthetic inventory snapshot for a facility."""
     facility = Facility.objects.get(id=facility_id)
     now = timezone.now()
     last_log = facility.inventory_logs.order_by("-timestamp").first()
@@ -329,6 +335,7 @@ def ingest_facility_data(facility_id: int) -> dict[str, Any]:
 
 @shared_task(queue="default")
 def ingestion_complete() -> dict[str, Any]:
+    """Report completion stats for recent ingestion activity."""
     recent_logs = InventoryLog.objects.filter(timestamp__gte=timezone.now() - timedelta(hours=1)).count()
     logger.info("ingestion_complete invoked", extra={"recent_logs": recent_logs})
     return {"recent_logs": recent_logs}
@@ -336,6 +343,7 @@ def ingestion_complete() -> dict[str, Any]:
 
 @shared_task(queue="default")
 def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]:
+    """Generate and persist forecasts while updating reorder thresholds."""
     if facility_ids is None:
         facility_ids = list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
 
@@ -346,7 +354,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
     payload = {
         "requests": [
             {"facility_id": int(fid), "lookback": lookback[idx].tolist()} for idx, fid in enumerate(facility_ids)
-        ]
+        ],
     }
 
     service_url = os.environ.get("FORECASTER_URL", "http://demand-forecaster:8001").rstrip("/")
@@ -370,7 +378,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
                             "forecast": [{"day": i + 1, "p10": 0.0, "p50": 0.0, "p90": 0.0} for i in range(14)],
                         }
                         for fid in facility_ids
-                    ]
+                    ],
                 }
     else:
         _handle_remote_unavailable("forecaster", "remote_disabled")
@@ -382,7 +390,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
                     "forecast": [{"day": i + 1, "p10": 0.0, "p50": 0.0, "p90": 0.0} for i in range(14)],
                 }
                 for fid in facility_ids
-            ]
+            ],
         }
 
     responses = list(body.get("responses", []))
@@ -422,6 +430,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
 
 @shared_task(queue="default")
 def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[str, Any]:
+    """Run anomaly detection for facilities and persist resulting alerts."""
     if facility_ids is None:
         facility_ids = list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
 
@@ -443,7 +452,7 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
         recent_logs = list(
             InventoryLog.objects.filter(facility_id=facility_id)
             .order_by("-timestamp")
-            .values_list("consumption", flat=True)[:7]
+            .values_list("consumption", flat=True)[:7],
         )
         latest_forecast = (
             Forecast.objects.filter(facility_id=facility_id).order_by("-created_at").only("predictions_json").first()
@@ -512,6 +521,7 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
 
 @shared_task(queue="training")
 def check_all_drift() -> dict[str, Any]:
+    """Evaluate model drift and enqueue retraining for drifting facilities."""
     drift_payload = build_drift_data()
     summary = DriftMonitor().check_all_facilities(drift_payload)
     retrain_task: Any = retrain_model
@@ -531,6 +541,7 @@ def check_all_drift() -> dict[str, Any]:
 
 @shared_task(queue="training")
 def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
+    """Train and potentially promote a model for a facility scope."""
     if os.environ.get("FUELSENSE_ENABLE_TRAINING_TASKS", "0") != "1":
         return {"facility_id": facility_id, "model_type": model_type, "status": "disabled"}
 
@@ -546,8 +557,6 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
 
 def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
     model_type = ModelRegistry.ModelType.DEMAND_FORECAST
-
-    from ml_pipeline.training import ForecastTrainer
 
     dataset = extract_training_data(facility_id)
     trainer = ForecastTrainer()
@@ -583,7 +592,7 @@ def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
 
     if improved:
         ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id, is_active=True).update(
-            is_active=False
+            is_active=False,
         )
         max_version = (
             ModelRegistry.objects.filter(model_type=model_type, facility_id=facility_id)
@@ -620,7 +629,6 @@ def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
 
 def _retrain_anomaly_detector_model() -> dict[str, Any]:
     model_type = ModelRegistry.ModelType.ANOMALY_DETECTOR
-    from ml_pipeline.anomaly_training import AnomalyTrainer
 
     trainer = AnomalyTrainer()
     try:
@@ -672,6 +680,7 @@ def _retrain_anomaly_detector_model() -> dict[str, Any]:
 
 @shared_task(queue="planning")
 def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
+    """Execute scheduled or manual planning and persist delivery outputs."""
     cycle: PlanningCycle | None = None
     if cycle_id is not None:
         try:
@@ -712,7 +721,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                         "cost_reduction_pct",
                         "status",
                         "completed_at",
-                    ]
+                    ],
                 )
             return {"queued": 0, "planning_cycles": 0, "deliveries_created": 0}
 
@@ -769,7 +778,8 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                         except Exception:
                             failed_depots += 1
                             logger.exception(
-                                "optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+                                "optimizer execution failed",
+                                extra={"depot_id": depot_id, "cycle_id": cycle_id},
                             )
                             continue
                         depot_results[depot_id] = (
@@ -784,7 +794,8 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                     except Exception:
                         failed_depots += 1
                         logger.exception(
-                            "optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+                            "optimizer execution failed",
+                            extra={"depot_id": depot_id, "cycle_id": cycle_id},
                         )
                         continue
                     depot_results[depot_id] = (
@@ -818,7 +829,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                         "cost_reduction_pct",
                         "status",
                         "completed_at",
-                    ]
+                    ],
                 )
             return {
                 "queued": len(queued_facilities),
@@ -881,7 +892,8 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
             except Exception:
                 failed_depots += 1
                 logger.exception(
-                    "persisting planning results failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+                    "persisting planning results failed",
+                    extra={"depot_id": depot_id, "cycle_id": cycle_id},
                 )
         observe_planning_stage("persist", perf_counter() - persist_start, trigger_type)
 
@@ -913,7 +925,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                     "cost_reduction_pct",
                     "status",
                     "completed_at",
-                ]
+                ],
             )
             planning_cycles = 1
 
@@ -948,6 +960,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
 
 @shared_task(queue="planning")
 def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict[str, Any]:
+    """Execute emergency planning for provided facilities under one cycle."""
     try:
         with transaction.atomic():
             cycle = PlanningCycle.objects.select_for_update().get(id=cycle_id)
@@ -1175,6 +1188,7 @@ def trigger_emergency_delivery(
     cycle_id: int | None = None,
     optimizer_client: httpx.Client | None = None,
 ) -> dict[str, Any]:
+    """Plan and materialize an emergency delivery for a single facility."""
     assignment = (
         DepotFacilityAssignment.objects.filter(facility_id=facility_id).select_related("depot", "facility").first()
     )

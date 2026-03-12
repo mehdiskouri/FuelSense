@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false
-
 from typing import Any, cast
 
 import pytest
@@ -134,7 +133,7 @@ def test_planning_model_dashboard_endpoints(api_client: Any, monkeypatch: pytest
 
     model = ModelRegistry.objects.first()
     assert model is not None
-    model_pk = cast(int, model.pk)
+    model_pk = cast("int", model.pk)
     promote = api_client.post(f"/api/v1/models/{model_pk}/promote/")
     assert promote.status_code == 200
 
@@ -172,7 +171,7 @@ def test_planning_trigger_emergency_dispatch(api_client: Any, monkeypatch: pytes
 
 @pytest.mark.django_db
 def test_planning_trigger_emergency_rejects_empty_facility_ids(
-    api_client: Any, monkeypatch: pytest.MonkeyPatch
+    api_client: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called: dict[str, list[str]] = {"tasks": []}
 
@@ -197,7 +196,7 @@ def test_planning_trigger_emergency_rejects_empty_facility_ids(
 
 @pytest.mark.django_db
 def test_planning_trigger_emergency_rejects_missing_facility_ids(
-    api_client: Any, monkeypatch: pytest.MonkeyPatch
+    api_client: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called: dict[str, list[str]] = {"tasks": []}
 

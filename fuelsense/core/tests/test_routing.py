@@ -89,7 +89,7 @@ def test_build_optimizer_request_uses_distance_matrix_cache(monkeypatch: pytest.
             dynamic_reorder_point=350.0,
             delivery_window_start=dt.time(8, 0),
             delivery_window_end=dt.time(14, 0),
-        )
+        ),
     ]
     DepotFacilityAssignmentFactory(depot=depot, facility=facilities[0])
     monkeypatch.setenv("FUELSENSE_ENABLE_ROUTING_MATRIX_CACHE", "1")

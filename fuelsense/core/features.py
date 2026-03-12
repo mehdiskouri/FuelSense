@@ -49,7 +49,7 @@ def _forward_fill(rows: list[_SeriesRow]) -> list[_SeriesRow]:
                 temperature=temp,
                 wind_speed=wind,
                 solar_irradiance=solar,
-            )
+            ),
         )
     return out
 
@@ -71,7 +71,7 @@ def _inventory_series_for_facility(facility_id: int) -> list[_SeriesRow]:
     logs = list(
         InventoryLog.objects.filter(facility_id=facility_id)
         .order_by("timestamp")
-        .values("timestamp", "consumption", "temperature", "wind_speed", "solar_irradiance")
+        .values("timestamp", "consumption", "temperature", "wind_speed", "solar_irradiance"),
     )
     rows = [
         _SeriesRow(
@@ -151,7 +151,7 @@ def extract_training_data(facility_id: int | None) -> dict[str, np.ndarray]:
     """
     if facility_id is None:
         facility_ids = list(
-            InventoryLog.objects.order_by("facility_id").values_list("facility_id", flat=True).distinct()
+            InventoryLog.objects.order_by("facility_id").values_list("facility_id", flat=True).distinct(),
         )
     else:
         facility_ids = [facility_id]
@@ -206,10 +206,10 @@ def extract_training_data(facility_id: int | None) -> dict[str, np.ndarray]:
 def _extract_prediction_series(predictions_json: Any) -> list[float]:
     if not isinstance(predictions_json, list):
         return []
-    items = cast(list[object], predictions_json)
+    items = cast("list[object]", predictions_json)
     out: list[float] = []
     for raw_item in items:
-        item = cast(dict[str, Any], raw_item) if isinstance(raw_item, dict) else None
+        item = cast("dict[str, Any]", raw_item) if isinstance(raw_item, dict) else None
         if not isinstance(item, dict):
             continue
         if "p50" in item:
@@ -230,8 +230,8 @@ def build_drift_data() -> list[dict[str, Any]]:
     ).select_related("facility")
 
     for model in active_models:
-        model_facility_id = cast(int | None, getattr(model, "facility_id", None))
-        baseline_rmse = cast(float | None, getattr(model, "validation_rmse", None))
+        model_facility_id = cast("int | None", getattr(model, "facility_id", None))
+        baseline_rmse = cast("float | None", getattr(model, "validation_rmse", None))
 
         if model_facility_id is None:
             continue
@@ -239,7 +239,7 @@ def build_drift_data() -> list[dict[str, Any]]:
         recent_actuals = list(
             InventoryLog.objects.filter(facility_id=model_facility_id, timestamp__gte=recent_window_start)
             .order_by("timestamp")
-            .values_list("consumption", flat=True)
+            .values_list("consumption", flat=True),
         )
 
         latest_forecast = (
@@ -253,11 +253,11 @@ def build_drift_data() -> list[dict[str, Any]]:
         payloads.append(
             {
                 "facility_id": int(model_facility_id),
-                "model_registry_id": int(cast(int, model.pk)),
+                "model_registry_id": int(cast("int", model.pk)),
                 "baseline_rmse": _safe_float(baseline_rmse),
                 "recent_actuals": [float(x) for x in recent_actuals],
                 "recent_predictions": recent_predictions,
-            }
+            },
         )
 
     return payloads

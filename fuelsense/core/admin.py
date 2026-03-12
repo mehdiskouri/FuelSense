@@ -32,8 +32,7 @@ from fuelsense.core.models import (
 from fuelsense.core.reorder import filter_below_reorder
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-
+import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +228,7 @@ class ModelRegistryAdmin(admin.ModelAdmin):
     def promote_to_active(self, request, queryset):
         for model in queryset:
             ModelRegistry.objects.filter(model_type=model.model_type, facility=model.facility).exclude(
-                id=model.id
+                id=model.id,
             ).update(is_active=False)
             model.is_active = True
             model.save(update_fields=["is_active"])
@@ -241,14 +240,14 @@ class ModelRegistryAdmin(admin.ModelAdmin):
         for model in queryset:
             prev = (
                 ModelRegistry.objects.filter(
-                    model_type=model.model_type, facility=model.facility, version__lt=model.version
+                    model_type=model.model_type, facility=model.facility, version__lt=model.version,
                 )
                 .order_by("-version")
                 .first()
             )
             if prev:
                 ModelRegistry.objects.filter(model_type=model.model_type, facility=model.facility).update(
-                    is_active=False
+                    is_active=False,
                 )
                 prev.is_active = True
                 prev.save(update_fields=["is_active"])

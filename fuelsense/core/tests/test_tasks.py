@@ -427,7 +427,7 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
                         "time_window_start": 300,
                         "time_window_end": 900,
                         "service_time": 30,
-                    }
+                    },
                 ],
                 "distance_matrix": [[0.0, 12.0], [12.0, 0.0]],
                 "max_route_duration": 480,
@@ -450,7 +450,7 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
                         "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
                         "distance_km": 24.0,
                         "cost": 48.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 24.0,
                 "total_cost": 48.0,
@@ -503,7 +503,7 @@ def test_run_planning_cycle_queues_facility_using_min_safe_fallback(monkeypatch:
                         "time_window_start": 300,
                         "time_window_end": 900,
                         "service_time": 30,
-                    }
+                    },
                 ],
                 "distance_matrix": [[0.0, 12.0], [12.0, 0.0]],
                 "max_route_duration": 480,
@@ -526,7 +526,7 @@ def test_run_planning_cycle_queues_facility_using_min_safe_fallback(monkeypatch:
                         "stops": [{"facility_index": 1, "demand": 40.0, "arrival_min": 360, "sequence": 1}],
                         "distance_km": 24.0,
                         "cost": 48.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 24.0,
                 "total_cost": 48.0,
@@ -588,7 +588,7 @@ def test_run_planning_cycle_updates_existing_queued_cycle(monkeypatch: pytest.Mo
                         "time_window_start": 300,
                         "time_window_end": 900,
                         "service_time": 30,
-                    }
+                    },
                 ],
                 "distance_matrix": [[0.0, 12.0], [12.0, 0.0]],
                 "max_route_duration": 480,
@@ -611,7 +611,7 @@ def test_run_planning_cycle_updates_existing_queued_cycle(monkeypatch: pytest.Mo
                         "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
                         "distance_km": 24.0,
                         "cost": 48.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 24.0,
                 "total_cost": 48.0,
@@ -761,7 +761,7 @@ def test_run_planning_cycle_parallel_partial_failure(monkeypatch: pytest.MonkeyP
 
     facility_ok = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0, latitude=24.71, longitude=46.71)
     facility_fail = FacilityFactory(
-        current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01
+        current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01,
     )
     DepotFacilityAssignmentFactory(depot=depot_ok, facility=facility_ok)
     DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
@@ -782,7 +782,7 @@ def test_run_planning_cycle_parallel_partial_failure(monkeypatch: pytest.MonkeyP
                     "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
                     "distance_km": 24.0,
                     "cost": 48.0,
-                }
+                },
             ],
             "total_distance_km": 24.0,
             "total_cost": 48.0,
@@ -811,7 +811,7 @@ def test_run_planning_cycle_strict_mode_aborts_on_depot_failure(monkeypatch: pyt
 
     facility_ok = FacilityFactory(current_inventory=50.0, dynamic_reorder_point=120.0, latitude=24.71, longitude=46.71)
     facility_fail = FacilityFactory(
-        current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01
+        current_inventory=40.0, dynamic_reorder_point=120.0, latitude=25.01, longitude=47.01,
     )
     DepotFacilityAssignmentFactory(depot=depot_ok, facility=facility_ok)
     DepotFacilityAssignmentFactory(depot=depot_fail, facility=facility_fail)
@@ -832,7 +832,7 @@ def test_run_planning_cycle_strict_mode_aborts_on_depot_failure(monkeypatch: pyt
                     "stops": [{"facility_index": 1, "demand": 70.0, "arrival_min": 360, "sequence": 1}],
                     "distance_km": 24.0,
                     "cost": 48.0,
-                }
+                },
             ],
             "total_distance_km": 24.0,
             "total_cost": 48.0,
@@ -903,7 +903,7 @@ def test_run_planning_cycle_parallel_many_depots_stress(monkeypatch: pytest.Monk
                     "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                     "distance_km": 20.0,
                     "cost": 40.0,
-                }
+                },
             ],
             "total_distance_km": 20.0,
             "total_cost": 40.0,
@@ -965,7 +965,7 @@ def test_run_planning_cycle_parallel_reuses_single_optimizer_client(monkeypatch:
                     "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                     "distance_km": 20.0,
                     "cost": 40.0,
-                }
+                },
             ],
             "total_distance_km": 20.0,
             "total_cost": 40.0,
@@ -1024,7 +1024,7 @@ def test_run_planning_cycle_parallel_closes_optimizer_client_on_exception(monkey
                     "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                     "distance_km": 20.0,
                     "cost": 40.0,
-                }
+                },
             ],
             "total_distance_km": 20.0,
             "total_cost": 40.0,
@@ -1105,7 +1105,7 @@ def test_trigger_emergency_delivery_creates_emergency_cycle(monkeypatch: pytest.
                         "time_window_start": 300,
                         "time_window_end": 900,
                         "service_time": 30,
-                    }
+                    },
                 ],
                 "distance_matrix": [[0.0, 10.0], [10.0, 0.0]],
                 "max_route_duration": 480,
@@ -1128,7 +1128,7 @@ def test_trigger_emergency_delivery_creates_emergency_cycle(monkeypatch: pytest.
                         "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                         "distance_km": 20.0,
                         "cost": 40.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 20.0,
                 "total_cost": 40.0,
@@ -1192,7 +1192,7 @@ def test_run_emergency_planning_cycle_uses_single_parent_cycle(monkeypatch: pyte
                         "time_window_start": 300,
                         "time_window_end": 900,
                         "service_time": 30,
-                    }
+                    },
                 ],
                 "distance_matrix": [[0.0, 10.0], [10.0, 0.0]],
                 "max_route_duration": 480,
@@ -1215,7 +1215,7 @@ def test_run_emergency_planning_cycle_uses_single_parent_cycle(monkeypatch: pyte
                         "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                         "distance_km": 20.0,
                         "cost": 40.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 20.0,
                 "total_cost": 40.0,
@@ -1386,7 +1386,7 @@ def test_run_emergency_planning_cycle_parallel_optimizer_exception_branch(monkey
                     "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                     "distance_km": 20.0,
                     "cost": 40.0,
-                }
+                },
             ],
             "total_distance_km": 20.0,
             "total_cost": 40.0,
@@ -1459,7 +1459,7 @@ def test_run_emergency_planning_cycle_parallel_reuses_single_optimizer_client(mo
                     "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
                     "distance_km": 20.0,
                     "cost": 40.0,
-                }
+                },
             ],
             "total_distance_km": 20.0,
             "total_cost": 40.0,
@@ -1568,7 +1568,7 @@ def test_trigger_emergency_delivery_skips_invalid_route_entries(monkeypatch: pyt
                         "time_window_start": 300,
                         "time_window_end": 900,
                         "service_time": 30,
-                    }
+                    },
                 ],
                 "distance_matrix": [[0.0, 10.0], [10.0, 0.0]],
                 "max_route_duration": 480,
@@ -1591,7 +1591,7 @@ def test_trigger_emergency_delivery_skips_invalid_route_entries(monkeypatch: pyt
                         "stops": ["bad-stop", {"facility_index": 404, "demand": 1.0, "arrival_min": 30, "sequence": 1}],
                         "distance_km": 20.0,
                         "cost": 40.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 20.0,
                 "total_cost": 40.0,

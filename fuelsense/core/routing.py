@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import math
 import hashlib
+import math
 import os
 from datetime import time
 from typing import Any
@@ -44,8 +44,8 @@ def _distance_matrix_cache_key(depot: Any, facilities: list[Any]) -> str:
                     str(int(facility.id)),
                     f"{float(facility.latitude):.6f}",
                     f"{float(facility.longitude):.6f}",
-                ]
-            )
+                ],
+            ),
         )
     digest = hashlib.sha1(";".join(parts).encode("utf-8")).hexdigest()
     return f"cache:routing:distance_matrix:{digest}"
@@ -82,7 +82,7 @@ def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str
                 "time_window_start": _time_to_minutes(getattr(facility, "delivery_window_start", None), 0),
                 "time_window_end": _time_to_minutes(getattr(facility, "delivery_window_end", None), 24 * 60),
                 "service_time": 30,
-            }
+            },
         )
         facility_index_map[idx] = int(facility.id)
 

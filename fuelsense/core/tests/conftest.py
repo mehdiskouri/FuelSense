@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false
-
 import datetime as dt
 from typing import Any
 
@@ -31,7 +30,7 @@ def use_locmem_cache(settings: Any) -> None:
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
             "LOCATION": "fuelsense-tests",
-        }
+        },
     }
 
 
@@ -62,6 +61,6 @@ def sample_inventory_logs(db: Any, sample_facilities: list[Any]) -> list[Invento
                 temperature=25.0,
                 wind_speed=3.0,
                 solar_irradiance=500.0,
-            )
+            ),
         )
     return logs

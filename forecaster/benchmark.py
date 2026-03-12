@@ -53,7 +53,7 @@ def main() -> None:
     x = rng.normal(size=(n, 90, 6)).astype(np.float32)
     y = rng.normal(size=(n, 14)).astype(np.float32)
 
-    backend = cast(ForecasterBackend, get_backend("demand_forecaster", device))
+    backend = cast("ForecasterBackend", get_backend("demand_forecaster", device))
     backend.warmup()
 
     if device == DeviceType.CUDA:
@@ -96,7 +96,7 @@ def main() -> None:
     print("backend,facilities,predict_ms,train_epoch_ms,val_rmse")
     print(
         f"{payload['backend']},{payload['facilities']},{payload['predict_ms']:.2f},"
-        f"{payload['train_epoch_ms']:.2f},{payload['val_rmse']:.4f}"
+        f"{payload['train_epoch_ms']:.2f},{payload['val_rmse']:.4f}",
     )
 
 

@@ -78,7 +78,7 @@ def test_batch_forecast_schemas_validate() -> None:
                 model_version="v1",
                 inference_time_ms=1.0,
                 device="cpu",
-            )
+            ),
         ],
         total_inference_time_ms=1.0,
         device="cpu",

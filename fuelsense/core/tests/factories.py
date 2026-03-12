@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # pyright: reportIncompatibleVariableOverride=false
-
 import datetime as dt
 from typing import Any
 

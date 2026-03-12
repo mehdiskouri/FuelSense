@@ -189,7 +189,7 @@ class ORToolsOptimizer(ComputeBackend):
                             "demand": float(demands.get(node, 0.0)),
                             "arrival_min": arrival_min,
                             "sequence": seq,
-                        }
+                        },
                     )
                     seq += 1
 
@@ -203,7 +203,7 @@ class ORToolsOptimizer(ComputeBackend):
                         "stops": route_stops,
                         "distance_km": float(route_distance),
                         "cost": float(route_cost),
-                    }
+                    },
                 )
                 total_distance += route_distance
                 total_cost += route_cost
@@ -230,5 +230,5 @@ class ORToolsOptimizer(ComputeBackend):
             return 0.0
         min_cost_per_km = min(float(v.get("cost_per_km", 1.0)) for v in vehicles)
         return float(
-            sum((2.0 * float(distance_matrix[0][node]) * min_cost_per_km) for node in range(1, len(distance_matrix)))
+            sum((2.0 * float(distance_matrix[0][node]) * min_cost_per_km) for node in range(1, len(distance_matrix))),
         )

@@ -11,7 +11,6 @@ import os
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-
 logger = logging.getLogger(__name__)
 
 

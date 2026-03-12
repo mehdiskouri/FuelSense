@@ -9,5 +9,5 @@ def use_locmem_cache(settings):
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
             "LOCATION": "fuelsense-synthetic-tests",
-        }
+        },
     }

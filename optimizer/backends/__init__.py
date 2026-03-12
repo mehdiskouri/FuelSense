@@ -7,4 +7,4 @@ try:
 except Exception:  # pragma: no cover - exercised in CPU-only images
     CUDARouteOptimizer = None  # type: ignore[assignment]
 
-__all__ = ["ORToolsOptimizer", "CUDARouteOptimizer"]
+__all__ = ["CUDARouteOptimizer", "ORToolsOptimizer"]

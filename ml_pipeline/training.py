@@ -61,7 +61,7 @@ class ForecastTrainer:
         def _validate_arrays(x: np.ndarray, y: np.ndarray, name: str) -> None:
             if x.ndim != 3 or x.shape[1:] != (DemandTCN.LOOKBACK, DemandTCN.N_FEATURES):
                 raise ValueError(
-                    f"{name}_data must have shape [N, {DemandTCN.LOOKBACK}, {DemandTCN.N_FEATURES}], got {x.shape}"
+                    f"{name}_data must have shape [N, {DemandTCN.LOOKBACK}, {DemandTCN.N_FEATURES}], got {x.shape}",
                 )
             if y.ndim == 1:
                 if y.shape[0] != x.shape[0]:
@@ -114,8 +114,8 @@ class ForecastTrainer:
             denom = np.clip(np.abs(y_true), a_min=1e-6, a_max=None)
             test_mape = float(
                 np.asarray(
-                    np.mean(np.abs((p50 - y_true) / denom)) * 100 if y_true.size else 0.0, dtype=np.float64
-                ).item()
+                    np.mean(np.abs((p50 - y_true) / denom)) * 100 if y_true.size else 0.0, dtype=np.float64,
+                ).item(),
             )
 
         validation_rmse = float(train_result.get("validation_rmse", test_rmse))
@@ -163,7 +163,7 @@ class ForecastTrainer:
                     "validation_rmse": validation_rmse,
                     "best_val_loss": float(train_result.get("best_val_loss", 0.0)),
                     "epochs_trained": float(train_result.get("epochs_trained", 0)),
-                }
+                },
             )
 
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -182,7 +182,7 @@ class ForecastTrainer:
                     "device": device.value,
                     "facility_id": str(facility_id) if facility_id is not None else "global",
                     "data_hash": self._hash_data(train_data),
-                }
+                },
             )
 
             run_id = run.info.run_id

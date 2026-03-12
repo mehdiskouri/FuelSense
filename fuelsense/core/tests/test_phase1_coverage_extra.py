@@ -18,8 +18,8 @@ from fuelsense.core.cache import (
 )
 from fuelsense.core.models import Facility
 from fuelsense.core.tests.factories import (
-    DeliveryItemFactory,
     DeliveryFactory,
+    DeliveryItemFactory,
     ForecastFactory,
     InventoryLogFactory,
     ModelRegistryFactory,
@@ -28,8 +28,8 @@ from fuelsense.core.tests.factories import (
 
 @pytest.mark.django_db
 def test_cache_helpers_and_metrics_refresh(sample_facilities: list[Any]) -> None:
-    f = cast(Facility, sample_facilities[0])
-    facility_id = cast(int, f.pk)
+    f = cast("Facility", sample_facilities[0])
+    facility_id = cast("int", f.pk)
     InventoryLogFactory(facility=f)
     ForecastFactory(facility=f)
     DeliveryFactory()
@@ -107,8 +107,8 @@ def test_health_and_ready_endpoints() -> None:
 
 @pytest.mark.django_db
 def test_cache_helper_branches(sample_facilities: list[Any]) -> None:
-    facility = cast(Facility, sample_facilities[0])
-    facility_id = cast(int, facility.pk)
+    facility = cast("Facility", sample_facilities[0])
+    facility_id = cast("int", facility.pk)
 
     # Direct helper branch coverage.
     assert _to_float(None) == 0.0

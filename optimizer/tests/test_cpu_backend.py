@@ -38,15 +38,15 @@ def test_solve_visits_all_stops_respects_capacity() -> None:
     vehicles, stops, matrix = _small_instance()
 
     result = backend.solve(24.7, 46.7, vehicles, stops, matrix, max_route_duration=480)
-    routes = cast(list[dict[str, Any]], result["routes"])
+    routes = cast("list[dict[str, Any]]", result["routes"])
 
     assert result["status"] == "optimal"
-    visited = [int(stop["facility_index"]) for route in routes for stop in cast(list[dict[str, Any]], route["stops"])]
+    visited = [int(stop["facility_index"]) for route in routes for stop in cast("list[dict[str, Any]]", route["stops"])]
     assert sorted(visited) == [1, 2, 3, 4, 5]
 
     capacity_by_vehicle = {idx: float(v["capacity"]) for idx, v in enumerate(vehicles)}
     for route in routes:
-        total_demand = sum(float(stop["demand"]) for stop in cast(list[dict[str, Any]], route["stops"]))
+        total_demand = sum(float(stop["demand"]) for stop in cast("list[dict[str, Any]]", route["stops"]))
         assert total_demand <= capacity_by_vehicle[int(route["vehicle_index"])] + 1e-6
 
 
@@ -63,8 +63,8 @@ def test_solve_cost_below_baseline_on_medium_instance() -> None:
             matrix[i][j] = float(abs(i - j) + (0.5 if i != j else 0.0))
 
     result = backend.solve(24.7, 46.7, vehicles, stops, matrix, max_route_duration=480)
-    total_cost = float(cast(float, result["total_cost"]))
-    baseline_cost = float(cast(float, result["baseline_cost"]))
+    total_cost = float(cast("float", result["total_cost"]))
+    baseline_cost = float(cast("float", result["baseline_cost"]))
     assert result["status"] == "optimal"
     assert total_cost < baseline_cost
 
@@ -151,7 +151,7 @@ def test_property_valid_inputs_satisfy_constraints(demands: list[float], capacit
                 "time_window_start": 0,
                 "time_window_end": 1440,
                 "service_time": 30,
-            }
+            },
         )
 
     matrix = [[0.0 for _ in range(n + 1)] for _ in range(n + 1)]
@@ -163,11 +163,11 @@ def test_property_valid_inputs_satisfy_constraints(demands: list[float], capacit
     if result["status"] != "optimal":
         return
 
-    routes = cast(list[dict[str, Any]], result["routes"])
-    visited = [int(stop["facility_index"]) for route in routes for stop in cast(list[dict[str, Any]], route["stops"])]
+    routes = cast("list[dict[str, Any]]", result["routes"])
+    visited = [int(stop["facility_index"]) for route in routes for stop in cast("list[dict[str, Any]]", route["stops"])]
     assert sorted(visited) == list(range(1, n + 1))
 
     for route in routes:
-        used = sum(float(stop["demand"]) for stop in cast(list[dict[str, Any]], route["stops"]))
+        used = sum(float(stop["demand"]) for stop in cast("list[dict[str, Any]]", route["stops"]))
         cap = float(vehicles[int(route["vehicle_index"])]["capacity"])
         assert used <= cap + 0.05

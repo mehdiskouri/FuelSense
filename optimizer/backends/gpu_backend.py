@@ -27,7 +27,7 @@ class CUDARouteOptimizer(ComputeBackend):
         self.time_limit_ms = int(os.environ.get("FUELSENSE_OPTIMIZER_TIME_LIMIT_MS", "10000"))
         self.n_parallel = int(os.environ.get("FUELSENSE_OPTIMIZER_N_PARALLEL", str(self.DEFAULT_N_PARALLEL)))
         self.max_iterations = int(
-            os.environ.get("FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS", str(self.DEFAULT_MAX_ITERATIONS))
+            os.environ.get("FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS", str(self.DEFAULT_MAX_ITERATIONS)),
         )
         # Optional bound for 2-opt neighborhood width. 0 disables pruning.
         self.max_swap_span = int(os.environ.get("FUELSENSE_OPTIMIZER_MAX_SWAP_SPAN", "0"))
@@ -268,7 +268,7 @@ class CUDARouteOptimizer(ComputeBackend):
                         "demand": float(stop_map.get(node, {}).get("demand", 0.0)),
                         "arrival_min": int(arrival),
                         "sequence": seq,
-                    }
+                    },
                 )
                 arrival += int(stop_map.get(node, {}).get("service_time", 30))
                 seq += 1
@@ -282,7 +282,7 @@ class CUDARouteOptimizer(ComputeBackend):
                     "stops": route_stops,
                     "distance_km": float(distance),
                     "cost": float(route_cost),
-                }
+                },
             )
             total_distance += distance
             total_cost += route_cost
@@ -307,5 +307,5 @@ class CUDARouteOptimizer(ComputeBackend):
             return 0.0
         min_cost_per_km = min(float(v.get("cost_per_km", 1.0)) for v in vehicles)
         return float(
-            sum((2.0 * float(distance_matrix[0][node]) * min_cost_per_km) for node in range(1, len(distance_matrix)))
+            sum((2.0 * float(distance_matrix[0][node]) * min_cost_per_km) for node in range(1, len(distance_matrix))),
         )

@@ -11,10 +11,10 @@ from fastapi import FastAPI, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 
+import optimizer.backends  # noqa: F401
 from fuelsense_common.compute import ComputeBackend, DeviceType, resolve_device
 from fuelsense_common.registry import get_backend
 from fuelsense_common.schemas import HealthResponse, OptimizeRequest, OptimizeResponse
-import optimizer.backends  # noqa: F401
 
 SOLVER_TIME = Histogram(
     "optimizer_solver_time_ms",
@@ -59,7 +59,7 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
         raise HTTPException(status_code=503, detail="Optimizer backend unavailable")
 
     start = perf_counter()
-    result = cast(Any, backend).solve(
+    result = cast("Any", backend).solve(
         depot_lat=request.depot_lat,
         depot_lng=request.depot_lng,
         vehicles=[v.model_dump() for v in request.vehicles],
@@ -80,7 +80,7 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
 def health() -> HealthResponse:
     if backend is None:
         return HealthResponse(status="degraded", device={"device": device_type.value, "backend_loaded": False})
-    details = cast(dict[str, object], backend.health_check())
+    details = cast("dict[str, object]", backend.health_check())
     details.setdefault("device", device_type.value)
     details["backend_loaded"] = True
     return HealthResponse(status="ok", device=details)

@@ -133,7 +133,7 @@ class Migration(migrations.Migration):
                 (
                     "delivery",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, related_name="items", to="core.delivery"
+                        on_delete=django.db.models.deletion.CASCADE, related_name="items", to="core.delivery",
                     ),
                 ),
                 ("facility", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="core.facility")),
@@ -165,13 +165,13 @@ class Migration(migrations.Migration):
                 (
                     "acknowledged_by",
                     models.ForeignKey(
-                        null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL
+                        null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL,
                     ),
                 ),
                 (
                     "facility",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, related_name="alerts", to="core.facility"
+                        on_delete=django.db.models.deletion.CASCADE, related_name="alerts", to="core.facility",
                     ),
                 ),
             ],
@@ -188,7 +188,7 @@ class Migration(migrations.Migration):
                 (
                     "facility",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, related_name="forecasts", to="core.facility"
+                        on_delete=django.db.models.deletion.CASCADE, related_name="forecasts", to="core.facility",
                     ),
                 ),
             ],
@@ -216,7 +216,7 @@ class Migration(migrations.Migration):
                 (
                     "facility",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, related_name="inventory_logs", to="core.facility"
+                        on_delete=django.db.models.deletion.CASCADE, related_name="inventory_logs", to="core.facility",
                     ),
                 ),
             ],
@@ -257,7 +257,7 @@ class Migration(migrations.Migration):
                 (
                     "depot",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, related_name="vehicles", to="core.depot"
+                        on_delete=django.db.models.deletion.CASCADE, related_name="vehicles", to="core.depot",
                     ),
                 ),
             ],

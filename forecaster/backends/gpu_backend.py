@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -20,7 +20,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from forecaster.model import DemandTCN, QuantileLoss
 from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import register_backend
-
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +59,7 @@ class CUDAForecaster(ComputeBackend):
         self.cuda_device = torch.device("cuda:0")
         self.stream = torch.cuda.Stream(device=self.cuda_device)
         self.train_num_workers = int(
-            os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0))))
+            os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0)))),
         )
 
         torch.backends.cudnn.benchmark = True
@@ -83,7 +82,7 @@ class CUDAForecaster(ComputeBackend):
             return
         with torch.no_grad(), _cuda_autocast():
             dummy = torch.zeros(
-                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device
+                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device,
             )
             _ = self.model(dummy)
         torch.cuda.synchronize(self.cuda_device)

@@ -78,7 +78,7 @@ class SyntheticDataGenerator:
                     longitude=lng,
                     fuel_type=fuels[(idx - 1) % len(fuels)],
                     fuel_inventory=float(self.rng.uniform(20_000, 60_000)),
-                )
+                ),
             )
         return depots
 

@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Case
-from django.db.models import F
-from django.db.models import FloatField
-from django.db.models import QuerySet
-from django.db.models import When
-
+from django.db.models import Case, F, FloatField, QuerySet, When
 
 EFFECTIVE_REORDER_ALIAS = "_effective_reorder_point"
 

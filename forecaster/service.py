@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 
+import forecaster.backends  # noqa: F401
 from fuelsense_common.compute import ComputeBackend, DeviceType, resolve_device
 from fuelsense_common.registry import get_backend
 from fuelsense_common.schemas import (
@@ -23,7 +24,6 @@ from fuelsense_common.schemas import (
     HealthResponse,
     QuantilePrediction,
 )
-import forecaster.backends  # noqa: F401
 
 INFERENCE_LATENCY = Histogram(
     "forecaster_inference_latency_ms",
@@ -81,7 +81,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         backend = get_backend("demand_forecaster", device_type)
         model_path = os.environ.get("MODEL_PATH", "").strip()
         if model_path and hasattr(backend, "load_model"):
-            cast(Any, backend).load_model(model_path)
+            cast("Any", backend).load_model(model_path)
             MODEL_VERSION.set(1)
     except RuntimeError:
         backend = None
@@ -105,7 +105,7 @@ def predict(request: ForecastRequest) -> ForecastResponse:
 
     lookback = lookback_matrix.reshape(1, 90, 6)
     start = perf_counter()
-    raw_predictions = cast(Any, backend).predict(lookback)
+    raw_predictions = cast("Any", backend).predict(lookback)
     elapsed_ms = (perf_counter() - start) * 1000
     INFERENCE_LATENCY.observe(elapsed_ms)
 
@@ -132,7 +132,7 @@ def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
 
     batch_input = np.stack(matrices, axis=0)
     start = perf_counter()
-    raw_predictions = cast(Any, backend).predict(batch_input)
+    raw_predictions = cast("Any", backend).predict(batch_input)
     elapsed_ms = (perf_counter() - start) * 1000
     batch_size = len(request.requests)
     BATCH_INFERENCE_LATENCY.labels(batch_size=str(batch_size)).observe(elapsed_ms)
@@ -156,7 +156,7 @@ def health() -> HealthResponse:
             status="degraded",
             device={"device": device_type.value, "backend_loaded": False},
         )
-    details = cast(dict[str, object], backend.health_check())
+    details = cast("dict[str, object]", backend.health_check())
     details.setdefault("device", device_type.value)
     details["backend_loaded"] = True
     return HealthResponse(status="ok", device=details)

@@ -82,7 +82,7 @@ async def test_detect_returns_200_with_mock_detector() -> None:
         is_loaded = True
 
         def detect(
-            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float]
+            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float],
         ) -> dict[str, object]:
             _ = actual, predicted, rolling_std, features
             return {
@@ -122,7 +122,7 @@ async def test_detect_returns_non_anomaly_response() -> None:
         is_loaded = True
 
         def detect(
-            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float]
+            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float],
         ) -> dict[str, object]:
             _ = actual, predicted, rolling_std, features
             return {
@@ -182,7 +182,7 @@ async def test_detect_increments_detection_counter() -> None:
         is_loaded = True
 
         def detect(
-            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float]
+            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float],
         ) -> dict[str, object]:
             _ = actual, predicted, rolling_std, features
             return {

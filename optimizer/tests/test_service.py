@@ -21,7 +21,7 @@ def _valid_optimize_payload() -> dict[str, object]:
                 "demand": 120.0,
                 "time_window_start": 0,
                 "time_window_end": 240,
-            }
+            },
         ],
         "distance_matrix": [[0.0, 10.0], [10.0, 0.0]],
     }
@@ -60,11 +60,11 @@ async def test_optimize_returns_200_with_mock_backend() -> None:
                                 "demand": 120.0,
                                 "arrival_min": 30,
                                 "sequence": 1,
-                            }
+                            },
                         ],
                         "distance_km": 10.0,
                         "cost": 22.0,
-                    }
+                    },
                 ],
                 "total_distance_km": 10.0,
                 "total_cost": 22.0,

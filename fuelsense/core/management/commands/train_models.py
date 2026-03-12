@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from celery.result import AsyncResult
-from django.db import DatabaseError
 from django.core.management.base import BaseCommand, CommandError
+from django.db import DatabaseError
 
 from fuelsense.core.models import Facility, ModelRegistry
 from fuelsense.core.tasks import retrain_model
@@ -78,8 +78,8 @@ class Command(BaseCommand):
         if os.environ.get("FUELSENSE_ENABLE_TRAINING_TASKS", "0") != "1":
             self.stdout.write(
                 self.style.WARNING(
-                    "Training tasks are disabled. Set FUELSENSE_ENABLE_TRAINING_TASKS=1 to enable dispatch."
-                )
+                    "Training tasks are disabled. Set FUELSENSE_ENABLE_TRAINING_TASKS=1 to enable dispatch.",
+                ),
             )
             return
 
@@ -118,7 +118,7 @@ class Command(BaseCommand):
             "Summary: "
             + ", ".join(
                 f"{key}={value}" for key, value in summary.items() if value > 0 or key in {"promoted", "failed"}
-            )
+            ),
         )
 
         if summary["failed"] > 0:
@@ -143,8 +143,8 @@ class Command(BaseCommand):
                     self.stdout.write(
                         self.style.WARNING(
                             f"Unable to resolve active demand facilities from database: {exc}. "
-                            "Proceeding without auto-selected demand targets."
-                        )
+                            "Proceeding without auto-selected demand targets.",
+                        ),
                     )
 
             for facility_id in sorted(demand_facility_ids):
@@ -153,7 +153,7 @@ class Command(BaseCommand):
                         label=f"demand:facility:{facility_id}",
                         facility_id=facility_id,
                         model_type=ModelRegistry.ModelType.DEMAND_FORECAST,
-                    )
+                    ),
                 )
 
             if options["include_global_demand"]:
@@ -162,20 +162,20 @@ class Command(BaseCommand):
                         label="demand:global",
                         facility_id=None,
                         model_type=ModelRegistry.ModelType.DEMAND_FORECAST,
-                    )
+                    ),
                 )
 
         if include_anomaly:
             if explicit_selectors:
                 self.stdout.write(
-                    self.style.WARNING("Facility selectors are ignored for anomaly training (global-only model).")
+                    self.style.WARNING("Facility selectors are ignored for anomaly training (global-only model)."),
                 )
             targets.append(
                 TrainTarget(
                     label="anomaly:global",
                     facility_id=None,
                     model_type=ModelRegistry.ModelType.ANOMALY_DETECTOR,
-                )
+                ),
             )
 
         return targets

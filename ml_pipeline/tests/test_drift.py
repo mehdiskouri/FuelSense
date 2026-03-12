@@ -64,7 +64,7 @@ def test_check_all_facilities_summary() -> None:
                 "recent_actuals": [10, 11, 12, 13, 14, 15],
                 "recent_predictions": [10, 11, 12, 13, 14, 15],
             },
-        ]
+        ],
     )
     assert summary["facilities_checked"] == 2
     assert 1 in summary["retrain_facility_ids"]

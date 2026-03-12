@@ -38,7 +38,7 @@ class AnomalyTrainer:
                 rng.integers(0, 7, normal_count),
                 rng.uniform(6.0, 84.0, normal_count),
                 rng.uniform(0.2, 0.95, normal_count),
-            ]
+            ],
         )
 
         per_type = 180
@@ -55,7 +55,7 @@ class AnomalyTrainer:
                 rng.integers(0, 7, per_type),
                 rng.uniform(24.0, 168.0, per_type),
                 rng.uniform(0.02, 0.25, per_type),
-            ]
+            ],
         )
         typed_blocks.append(leak)
         labels.append(np.full(per_type, 0, dtype=np.int32))
@@ -70,7 +70,7 @@ class AnomalyTrainer:
                 rng.integers(0, 7, per_type),
                 rng.uniform(0.2, 14.0, per_type),
                 rng.uniform(0.05, 0.4, per_type),
-            ]
+            ],
         )
         typed_blocks.append(theft)
         labels.append(np.full(per_type, 1, dtype=np.int32))
@@ -85,7 +85,7 @@ class AnomalyTrainer:
                 rng.integers(0, 7, per_type),
                 rng.uniform(36.0, 180.0, per_type),
                 rng.uniform(0.15, 0.5, per_type),
-            ]
+            ],
         )
         typed_blocks.append(equipment)
         labels.append(np.full(per_type, 2, dtype=np.int32))
@@ -100,7 +100,7 @@ class AnomalyTrainer:
                 rng.choice([0.0, 1.0, 5.0, 6.0], per_type),
                 rng.uniform(12.0, 96.0, per_type),
                 rng.uniform(0.2, 0.8, per_type),
-            ]
+            ],
         )
         typed_blocks.append(demand_shift)
         labels.append(np.full(per_type, 3, dtype=np.int32))
@@ -115,7 +115,7 @@ class AnomalyTrainer:
                 rng.integers(0, 7, per_type),
                 rng.uniform(1.0, 200.0, per_type),
                 rng.choice([0.0, 1.1, 1.3], per_type),
-            ]
+            ],
         )
         typed_blocks.append(sensor_fault)
         labels.append(np.full(per_type, 4, dtype=np.int32))
@@ -176,7 +176,7 @@ class AnomalyTrainer:
 
         y_if_pred = (iforest.predict(X_if_test) == -1).astype(np.int32)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            y_if_test, y_if_pred, average="binary", zero_division=0
+            y_if_test, y_if_pred, average="binary", zero_division=0,
         )
 
         cls_accuracy = float(np.mean(classifier.predict(X_cls_test) == y_cls_test))
@@ -204,7 +204,7 @@ class AnomalyTrainer:
                     "rf_estimators": 300,
                     "rf_max_depth": 10,
                     "rf_min_samples_leaf": 2,
-                }
+                },
             )
             mlflow.log_metrics(
                 {
@@ -212,7 +212,7 @@ class AnomalyTrainer:
                     "recall": float(recall),
                     "f1": float(f1),
                     "classifier_accuracy": cls_accuracy,
-                }
+                },
             )
             mlflow.log_artifact(str(forest_path), artifact_path="models")
             mlflow.log_artifact(str(classifier_path), artifact_path="models")
