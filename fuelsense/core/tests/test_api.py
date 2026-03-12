@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from django.core.cache import cache
 from django.test import Client
 
 from fuelsense.core.models import Delivery, ModelRegistry
@@ -184,3 +185,14 @@ def test_auth_required() -> None:
     client = Client()
     res = client.get("/api/v1/facilities/")
     assert res.status_code in {401, 403}
+
+
+@pytest.mark.django_db
+def test_dashboard_kpis_counts_below_reorder_with_fallback_threshold(api_client: Any) -> None:
+    FacilityFactory(current_inventory=180.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
+    FacilityFactory(current_inventory=260.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
+    cache.delete("cache:dashboard:kpis")
+
+    response = api_client.get("/api/v1/dashboard/kpis/")
+    assert response.status_code == 200
+    assert response.data["facilities_below_reorder"] == 1

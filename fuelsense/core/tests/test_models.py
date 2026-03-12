@@ -47,6 +47,23 @@ def test_reorder_status_property():
 
 
 @pytest.mark.django_db
+def test_effective_reorder_point_falls_back_for_null_or_non_positive_dynamic() -> None:
+    facility = FacilityFactory(current_inventory=250, dynamic_reorder_point=None, min_safe_inventory=200)
+    assert facility.effective_reorder_point == 200.0
+    assert facility.reorder_status == "OK"
+
+    facility.dynamic_reorder_point = 0.0
+    facility.current_inventory = 180
+    assert facility.effective_reorder_point == 200.0
+    assert facility.reorder_status == "CRITICAL"
+
+    facility.dynamic_reorder_point = 280.0
+    facility.current_inventory = 250
+    assert facility.effective_reorder_point == 280.0
+    assert facility.reorder_status == "WARNING"
+
+
+@pytest.mark.django_db
 def test_inventory_log_unique_constraint():
     facility = FacilityFactory()
     ts = timezone.now().replace(microsecond=0)

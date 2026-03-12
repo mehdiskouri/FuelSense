@@ -82,6 +82,45 @@ def test_run_batch_forecasts_empty_lookback_returns_empty(monkeypatch: pytest.Mo
 
 
 @pytest.mark.django_db
+def test_run_batch_forecasts_fallback_preserves_prior_dynamic_reorder(monkeypatch: pytest.MonkeyPatch) -> None:
+    facility = FacilityFactory(dynamic_reorder_point=345.0, min_safe_inventory=200.0)
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_FORECAST", "0")
+    monkeypatch.setattr(
+        "fuelsense.core.tasks.build_lookback_matrix",
+        lambda facility_ids: __import__("numpy").ones((len(facility_ids), 90, 6), dtype="float32"),
+    )
+
+    result = tasks.run_batch_forecasts([facility.id])
+    assert result["created"] == 1
+
+    facility.refresh_from_db()
+    assert facility.dynamic_reorder_point == pytest.approx(345.0)
+
+
+@pytest.mark.django_db
+def test_run_batch_forecasts_fallback_uses_consumption_heuristic_without_prior_dynamic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    facility = FacilityFactory(dynamic_reorder_point=None, min_safe_inventory=200.0)
+    InventoryLogFactory(facility=facility, consumption=100.0)
+    InventoryLogFactory(facility=facility, consumption=100.0)
+    InventoryLogFactory(facility=facility, consumption=100.0)
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_FORECAST", "0")
+    monkeypatch.setattr(
+        "fuelsense.core.tasks.build_lookback_matrix",
+        lambda facility_ids: __import__("numpy").ones((len(facility_ids), 90, 6), dtype="float32"),
+    )
+
+    result = tasks.run_batch_forecasts([facility.id])
+    assert result["created"] == 1
+
+    facility.refresh_from_db()
+    assert facility.dynamic_reorder_point == pytest.approx(330.0)
+
+
+@pytest.mark.django_db
 def test_tasks_execute_and_return_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
     facility = FacilityFactory()
     depot = DepotFactory()
@@ -347,6 +386,79 @@ def test_run_planning_cycle_creates_planning_and_deliveries(monkeypatch: pytest.
     assert cycle.status == PlanningCycle.ExecutionStatus.COMPLETED
     assert Delivery.objects.filter(vehicle=vehicle).count() == 1
     assert DeliveryItem.objects.filter(facility=facility).count() == 1
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_queues_facility_using_min_safe_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot = DepotFactory()
+    vehicle = VehicleFactory(depot=depot, is_available=True)
+    facility = FacilityFactory(current_inventory=180.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
+    DepotFacilityAssignmentFactory(depot=depot, facility=facility)
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "1")
+    monkeypatch.setattr(
+        "fuelsense.core.tasks.build_optimizer_request",
+        lambda _depot, _facilities: (
+            {
+                "depot_lat": 24.7,
+                "depot_lng": 46.7,
+                "vehicles": [{"capacity": 1000.0, "cost_per_km": 2.0}],
+                "stops": [
+                    {
+                        "facility_index": 1,
+                        "demand": 40.0,
+                        "time_window_start": 300,
+                        "time_window_end": 900,
+                        "service_time": 30,
+                    }
+                ],
+                "distance_matrix": [[0.0, 12.0], [12.0, 0.0]],
+                "max_route_duration": 480,
+            },
+            {1: facility.id},
+        ),
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "status": "optimal",
+                "routes": [
+                    {
+                        "vehicle_index": 0,
+                        "stops": [{"facility_index": 1, "demand": 40.0, "arrival_min": 360, "sequence": 1}],
+                        "distance_km": 24.0,
+                        "cost": 48.0,
+                    }
+                ],
+                "total_distance_km": 24.0,
+                "total_cost": 48.0,
+                "vehicles_used": 1,
+                "solver_time_ms": 20.0,
+                "baseline_cost": 60.0,
+                "cost_reduction_pct": 20.0,
+            }
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            _ = exc_type, exc, tb
+
+        def post(self, _url: str, json: dict[str, object]) -> _Response:
+            assert "stops" in json
+            return _Response()
+
+    monkeypatch.setattr("fuelsense.core.tasks.httpx.Client", lambda timeout: _Client())
+
+    result = tasks.run_planning_cycle()
+    assert result["deliveries_created"] == 1
+    assert Delivery.objects.filter(vehicle=vehicle).count() == 1
 
 
 @pytest.mark.django_db
