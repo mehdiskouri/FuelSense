@@ -25,6 +25,8 @@ class CUDARouteOptimizer(ComputeBackend):
             raise RuntimeError("CUDA backend requested but CUDA is not available")
         self.cuda_device = torch.device("cuda:0")
         self.time_limit_ms = int(os.environ.get("FUELSENSE_OPTIMIZER_TIME_LIMIT_MS", "10000"))
+        # Optional bound for 2-opt neighborhood width. 0 disables pruning.
+        self.max_swap_span = int(os.environ.get("FUELSENSE_OPTIMIZER_MAX_SWAP_SPAN", "0"))
 
     def warmup(self) -> None:
         tiny = [
@@ -94,23 +96,35 @@ class CUDARouteOptimizer(ComputeBackend):
 
     def _evaluate_2opt_batch(self, dist: torch.Tensor, routes: torch.Tensor) -> torch.Tensor:
         n_parallel, n = routes.shape
-        deltas = torch.full((n_parallel, n, n), float("inf"), device=self.cuda_device)
-        for s in range(n_parallel):
-            route = routes[s]
-            for i in range(1, n - 1):
-                a = int(route[i - 1].item())
-                b = int(route[i].item())
-                for j in range(i + 1, n):
-                    c = int(route[j].item())
-                    d = int(route[(j + 1) % n].item())
-                    delta = dist[a, c] + dist[b, d] - dist[a, b] - dist[c, d]
-                    deltas[s, i, j] = delta
+
+        # Build [P, N, N] index grids once per call and evaluate all swap deltas in parallel.
+        device = self.cuda_device
+        i_idx = torch.arange(n, device=device).view(1, n, 1).expand(n_parallel, n, n)
+        j_idx = torch.arange(n, device=device).view(1, 1, n).expand(n_parallel, n, n)
+        p_idx = torch.arange(n_parallel, device=device).view(n_parallel, 1, 1).expand(n_parallel, n, n)
+
+        a_nodes = routes[p_idx, (i_idx - 1).clamp_min(0)]
+        b_nodes = routes[p_idx, i_idx]
+        c_nodes = routes[p_idx, j_idx]
+        d_nodes = routes[p_idx, (j_idx + 1) % n]
+
+        deltas = dist[a_nodes, c_nodes] + dist[b_nodes, d_nodes] - dist[a_nodes, b_nodes] - dist[c_nodes, d_nodes]
+
+        invalid = (i_idx <= 0) | (j_idx <= 0) | (j_idx <= i_idx)
+        if self.max_swap_span > 0:
+            invalid = invalid | ((j_idx - i_idx) > self.max_swap_span)
+        deltas = deltas.masked_fill(invalid, float("inf"))
         return deltas
 
     @staticmethod
     def _route_cost(route: torch.Tensor, dist: torch.Tensor) -> torch.Tensor:
         nxt = torch.roll(route, shifts=-1)
         return dist[route, nxt].sum()
+
+    @staticmethod
+    def _route_cost_batch(routes: torch.Tensor, dist: torch.Tensor) -> torch.Tensor:
+        nxt = torch.roll(routes, shifts=-1, dims=1)
+        return dist[routes, nxt].sum(dim=1)
 
     def solve(
         self,
@@ -137,7 +151,7 @@ class CUDARouteOptimizer(ComputeBackend):
 
         dist = torch.as_tensor(distance_matrix, dtype=torch.float32, device=self.cuda_device)
         routes = self._nearest_neighbor_init(dist, self.N_PARALLEL)
-        costs = torch.stack([self._route_cost(routes[i], dist) for i in range(routes.shape[0])])
+        costs = self._route_cost_batch(routes, dist)
         best_idx = int(torch.argmin(costs).item())
         best_route = routes[best_idx].clone()
         best_cost = float(costs[best_idx].item())
@@ -169,7 +183,7 @@ class CUDARouteOptimizer(ComputeBackend):
                     break
                 continue
 
-            costs = torch.stack([self._route_cost(routes[i], dist) for i in range(routes.shape[0])])
+            costs = self._route_cost_batch(routes, dist)
             idx = int(torch.argmin(costs).item())
             val = float(costs[idx].item())
             if val + 1e-6 < best_cost:
