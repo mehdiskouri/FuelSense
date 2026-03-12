@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from celery import current_app
 from django.core.cache import cache
-from django.db.models import Avg, F
+from django.db.models import Avg
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -15,6 +15,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from fuelsense.core.models import AnomalyAlert, Delivery, Facility, Forecast, InventoryLog, ModelRegistry, PlanningCycle
+from fuelsense.core.reorder import filter_below_reorder
 from fuelsense.core.serializers import (
     AnomalyAlertAcknowledgeSerializer,
     AnomalyAlertSerializer,
@@ -223,7 +224,7 @@ class DashboardViewSet(viewsets.ViewSet):
         avg_rmse = Forecast.objects.aggregate(v=Avg("rmse"))["v"] or 0.0
         total_alerts = AnomalyAlert.objects.count()
         unack = AnomalyAlert.objects.filter(is_acknowledged=False).count()
-        below_reorder = Facility.objects.filter(current_inventory__lte=F("dynamic_reorder_point")).count()
+        below_reorder = filter_below_reorder(Facility.objects.all()).count()
         in_transit = Delivery.objects.filter(status=Delivery.Status.IN_TRANSIT).count()
 
         payload = {

@@ -6,6 +6,8 @@ import math
 from datetime import time
 from typing import Any
 
+from fuelsense.core.reorder import get_effective_reorder_point
+
 
 def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     radius_km = 6371.0
@@ -31,7 +33,11 @@ def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str
 
     for idx, facility in enumerate(facilities, start=1):
         coords.append((float(facility.latitude), float(facility.longitude)))
-        demand = max(float(facility.dynamic_reorder_point or 0.0) - float(facility.current_inventory), 0.0)
+        reorder_point = get_effective_reorder_point(
+            getattr(facility, "dynamic_reorder_point", None),
+            float(getattr(facility, "min_safe_inventory", 0.0)),
+        )
+        demand = max(float(reorder_point) - float(facility.current_inventory), 0.0)
         stops.append(
             {
                 "facility_index": idx,

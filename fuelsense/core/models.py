@@ -5,6 +5,8 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 
+from fuelsense.core.reorder import get_effective_reorder_point
+
 
 class FuelType(models.Model):
     name = models.CharField(max_length=50)
@@ -43,10 +45,12 @@ class Facility(models.Model):
         ]
 
     @property
+    def effective_reorder_point(self) -> float:
+        return get_effective_reorder_point(self.dynamic_reorder_point, self.min_safe_inventory)
+
+    @property
     def reorder_status(self) -> str:
-        reorder_point = (
-            self.dynamic_reorder_point if self.dynamic_reorder_point is not None else self.min_safe_inventory
-        )
+        reorder_point = self.effective_reorder_point
         if self.current_inventory <= self.min_safe_inventory:
             return "CRITICAL"
         if self.current_inventory <= reorder_point:

@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from celery import chord, shared_task
 from django.db import transaction
-from django.db.models import F, Max
+from django.db.models import Max
 from django.utils import timezone
 
 from fuelsense.core.features import (
@@ -33,6 +33,7 @@ from fuelsense.core.models import (
     ModelRegistry,
     PlanningCycle,
 )
+from fuelsense.core.reorder import filter_below_reorder, is_reliable_reorder_point
 from fuelsense.core.routing import build_optimizer_request
 from ml_pipeline.drift import DriftMonitor
 
@@ -136,6 +137,40 @@ def _run_optimizer(payload: dict[str, object]) -> dict[str, Any]:
 def _planned_arrival_for_minutes(arrival_min: int) -> datetime:
     start_of_day = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
     return start_of_day + timedelta(minutes=max(arrival_min, 0))
+
+
+def _fallback_reorder_point_from_recent_consumption(facility: Facility) -> float:
+    recent_consumption = list(
+        InventoryLog.objects.filter(facility_id=facility.id)
+        .order_by("-timestamp")
+        .values_list("consumption", flat=True)[:7]
+    )
+    if recent_consumption:
+        avg_daily_consumption = sum(max(float(value), 0.0) for value in recent_consumption) / len(recent_consumption)
+        lead_time_days = 3.0
+        safety_margin = 1.1
+        heuristic_threshold = avg_daily_consumption * lead_time_days * safety_margin
+        return max(float(facility.min_safe_inventory), heuristic_threshold)
+    return float(facility.min_safe_inventory)
+
+
+def _resolve_reorder_point_for_forecast(
+    facility: Facility,
+    forecast_data: list[dict[str, object]],
+    model_version: str,
+) -> tuple[float, str]:
+    p90_values = [float(step.get("p90", 0.0)) for step in forecast_data[:3]]
+    lead_time_p90 = sum(p90_values) if p90_values else 0.0
+    model_reorder_point = lead_time_p90 * 1.1
+    is_fallback_forecast = model_version == "fallback-local"
+
+    if not is_fallback_forecast and model_reorder_point > 0.0:
+        return model_reorder_point, "model_forecast"
+
+    if is_reliable_reorder_point(facility.dynamic_reorder_point):
+        return float(facility.dynamic_reorder_point), "preserved_prior"
+
+    return _fallback_reorder_point_from_recent_consumption(facility), "heuristic_fallback"
 
 
 @shared_task(queue="default")
@@ -255,19 +290,28 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
     for item in responses:
         facility_id = int(item["facility_id"])
         forecast_data = list(item.get("forecast", []))
+        facility = Facility.objects.only("id", "dynamic_reorder_point", "min_safe_inventory").get(id=facility_id)
+        model_version = str(item.get("model_version", "unknown"))
         Forecast.objects.create(
             facility_id=facility_id,
-            model_version=str(item.get("model_version", "unknown")),
+            model_version=model_version,
             horizon_days=len(forecast_data),
             predictions_json=forecast_data,
             rmse=None,
         )
         created += 1
 
-        p90_values = [float(step.get("p90", 0.0)) for step in forecast_data[:3]]
-        lead_time_p90 = sum(p90_values) if p90_values else 0.0
-        reorder_point = lead_time_p90 * 1.1
+        reorder_point, reorder_source = _resolve_reorder_point_for_forecast(facility, forecast_data, model_version)
         Facility.objects.filter(id=facility_id).update(dynamic_reorder_point=reorder_point)
+        logger.info(
+            "reorder point updated",
+            extra={
+                "facility_id": facility_id,
+                "model_version": model_version,
+                "reorder_point": reorder_point,
+                "reorder_source": reorder_source,
+            },
+        )
 
     logger.info(
         "run_batch_forecasts completed",
@@ -481,9 +525,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
             return {"cycle_id": cycle_id, "error": "cycle_not_found"}
 
     try:
-        queued_facilities = list(
-            Facility.objects.filter(is_active=True, current_inventory__lte=F("dynamic_reorder_point")).order_by("id")
-        )
+        queued_facilities = list(filter_below_reorder(Facility.objects.filter(is_active=True)).order_by("id"))
         if not queued_facilities:
             if cycle is not None:
                 cycle.facilities_in_queue = 0

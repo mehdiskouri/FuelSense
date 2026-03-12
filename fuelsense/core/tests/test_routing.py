@@ -63,3 +63,15 @@ def test_build_optimizer_request_schema_and_matrix_properties() -> None:
         assert float(stop["demand"]) >= 0.0
 
     assert facility_index_map == {1: facilities[0].id, 2: facilities[1].id, 3: facilities[2].id}
+
+
+@pytest.mark.django_db
+def test_build_optimizer_request_uses_min_safe_fallback_for_demand() -> None:
+    depot = DepotFactory(latitude=24.7, longitude=46.7)
+    VehicleFactory(depot=depot, capacity=1000.0, cost_per_km=2.1, is_available=True)
+    facility = FacilityFactory(current_inventory=150.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
+
+    payload, _ = build_optimizer_request(depot, [facility])
+    stops = payload["stops"]
+    assert len(stops) == 1
+    assert float(stops[0]["demand"]) == pytest.approx(70.0)

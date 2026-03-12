@@ -7,7 +7,7 @@ from io import BytesIO
 
 import matplotlib
 from django.contrib import admin, messages
-from django.db.models import Avg, Count, F
+from django.db.models import Avg, Count
 from django.shortcuts import render
 from django.urls import path
 from django.utils import timezone
@@ -26,6 +26,7 @@ from fuelsense.core.models import (
     PlanningCycle,
     Vehicle,
 )
+from fuelsense.core.reorder import filter_below_reorder
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -233,7 +234,7 @@ class AnomalyAlertAdmin(admin.ModelAdmin):
 
 
 def admin_dashboard(request):
-    below_reorder = Facility.objects.filter(current_inventory__lte=F("dynamic_reorder_point"))
+    below_reorder = filter_below_reorder(Facility.objects.all())
     in_transit = Delivery.objects.filter(status=Delivery.Status.IN_TRANSIT)
     today_alerts = AnomalyAlert.objects.filter(timestamp__date=timezone.now().date()).order_by("-timestamp")
     drift = ModelRegistry.objects.select_related("facility").order_by("-trained_at")[:50]
