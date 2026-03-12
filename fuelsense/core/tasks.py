@@ -50,6 +50,12 @@ def _default_parallel_workers() -> int:
     return max(os.cpu_count() or 1, 1)
 
 
+def _build_remote_optimizer_client() -> httpx.Client | None:
+    if os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") != "1":
+        return None
+    return httpx.Client(timeout=20.0)
+
+
 def _delivery_idempotency_key(
     *,
     cycle: PlanningCycle | None,
@@ -679,7 +685,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
         except PlanningCycle.DoesNotExist:
             return {"cycle_id": cycle_id, "error": "cycle_not_found"}
 
-    trigger_type = PlanningCycle.TriggerType.SCHEDULED
+    trigger_type = cycle.trigger_type if cycle is not None else PlanningCycle.TriggerType.SCHEDULED
     try:
         queue_start = perf_counter()
         queued_facilities = list(filter_below_reorder(Facility.objects.filter(is_active=True)).order_by("id"))
@@ -748,32 +754,30 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
         max_workers_env = int(os.environ.get("FUELSENSE_PLANNING_PARALLEL_WORKERS", str(_default_parallel_workers())))
         max_workers = max(1, min(max_workers_env, len(depot_jobs) or 1))
 
-        if parallel_enabled and len(depot_jobs) > 1:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(_run_optimizer, job["payload"], None): depot_id
-                    for depot_id, job in depot_jobs.items()
-                }
-                for future in as_completed(futures):
-                    depot_id = futures[future]
-                    try:
-                        result = future.result()
-                    except Exception:
-                        failed_depots += 1
-                        logger.exception(
-                            "optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+        optimizer_client = _build_remote_optimizer_client()
+        try:
+            if parallel_enabled and len(depot_jobs) > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(_run_optimizer, job["payload"], optimizer_client): depot_id
+                        for depot_id, job in depot_jobs.items()
+                    }
+                    for future in as_completed(futures):
+                        depot_id = futures[future]
+                        try:
+                            result = future.result()
+                        except Exception:
+                            failed_depots += 1
+                            logger.exception(
+                                "optimizer execution failed", extra={"depot_id": depot_id, "cycle_id": cycle_id}
+                            )
+                            continue
+                        depot_results[depot_id] = (
+                            result
+                            if isinstance(result, dict)
+                            else _fallback_optimizer_response(depot_jobs[depot_id]["payload"])
                         )
-                        continue
-                    depot_results[depot_id] = (
-                        result
-                        if isinstance(result, dict)
-                        else _fallback_optimizer_response(depot_jobs[depot_id]["payload"])
-                    )
-        else:
-            optimizer_client: httpx.Client | None = None
-            if os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1":
-                optimizer_client = httpx.Client(timeout=20.0)
-            try:
+            else:
                 for depot_id, job in depot_jobs.items():
                     try:
                         result = _run_optimizer(job["payload"], optimizer_client=optimizer_client)
@@ -786,9 +790,9 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
                     depot_results[depot_id] = (
                         result if isinstance(result, dict) else _fallback_optimizer_response(job["payload"])
                     )
-            finally:
-                if optimizer_client is not None and hasattr(optimizer_client, "close"):
-                    optimizer_client.close()
+        finally:
+            if optimizer_client is not None and hasattr(optimizer_client, "close"):
+                optimizer_client.close()
         observe_planning_stage("optimizer_call", perf_counter() - optimize_start, trigger_type)
 
         strict_mode = os.environ.get("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "1") == "1"
@@ -991,33 +995,31 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
         max_workers = max(1, min(max_workers_env, len(facility_jobs) or 1))
         facility_results: dict[int, dict[str, Any]] = {}
 
-        if parallel_enabled and len(facility_jobs) > 1:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(_run_optimizer, job["payload"], None): facility_id
-                    for facility_id, job in facility_jobs.items()
-                }
-                for future in as_completed(futures):
-                    facility_id = futures[future]
-                    try:
-                        result = future.result()
-                    except Exception:
-                        failed_facilities += 1
-                        logger.exception(
-                            "emergency optimizer execution failed",
-                            extra={"facility_id": facility_id, "cycle_id": cycle_id},
+        optimizer_client = _build_remote_optimizer_client()
+        try:
+            if parallel_enabled and len(facility_jobs) > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(_run_optimizer, job["payload"], optimizer_client): facility_id
+                        for facility_id, job in facility_jobs.items()
+                    }
+                    for future in as_completed(futures):
+                        facility_id = futures[future]
+                        try:
+                            result = future.result()
+                        except Exception:
+                            failed_facilities += 1
+                            logger.exception(
+                                "emergency optimizer execution failed",
+                                extra={"facility_id": facility_id, "cycle_id": cycle_id},
+                            )
+                            continue
+                        facility_results[facility_id] = (
+                            result
+                            if isinstance(result, dict)
+                            else _fallback_optimizer_response(facility_jobs[facility_id]["payload"])
                         )
-                        continue
-                    facility_results[facility_id] = (
-                        result
-                        if isinstance(result, dict)
-                        else _fallback_optimizer_response(facility_jobs[facility_id]["payload"])
-                    )
-        else:
-            optimizer_client: httpx.Client | None = None
-            if os.environ.get("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "0") == "1":
-                optimizer_client = httpx.Client(timeout=20.0)
-            try:
+            else:
                 for facility_id, job in facility_jobs.items():
                     try:
                         result = _run_optimizer(job["payload"], optimizer_client=optimizer_client)
@@ -1031,9 +1033,9 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
                     facility_results[facility_id] = (
                         result if isinstance(result, dict) else _fallback_optimizer_response(job["payload"])
                     )
-            finally:
-                if optimizer_client is not None and hasattr(optimizer_client, "close"):
-                    optimizer_client.close()
+        finally:
+            if optimizer_client is not None and hasattr(optimizer_client, "close"):
+                optimizer_client.close()
         observe_planning_stage("optimizer_call", perf_counter() - optimizer_stage_start, trigger_type)
 
         if strict_mode and failed_facilities > 0:

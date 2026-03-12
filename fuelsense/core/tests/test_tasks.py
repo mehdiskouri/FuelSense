@@ -83,6 +83,14 @@ def test_run_optimizer_with_provided_client_http_error_falls_back(monkeypatch: p
     assert result["status"] == "infeasible"
 
 
+def test_default_parallel_workers_uses_cpu_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tasks.os, "cpu_count", lambda: 12)
+    assert tasks._default_parallel_workers() == 12
+
+    monkeypatch.setattr(tasks.os, "cpu_count", lambda: None)
+    assert tasks._default_parallel_workers() == 1
+
+
 @pytest.mark.django_db
 def test_run_batch_forecasts_empty_lookback_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -634,6 +642,46 @@ def test_run_planning_cycle_updates_existing_queued_cycle(monkeypatch: pytest.Mo
 
 
 @pytest.mark.django_db
+def test_run_planning_cycle_observes_cycle_trigger_type_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.MANUAL,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=0,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    observed: list[tuple[str, str]] = []
+
+    def _observe(stage: str, _duration: float, trigger_type: str) -> None:
+        observed.append((stage, trigger_type))
+
+    monkeypatch.setattr("fuelsense.core.tasks.observe_planning_stage", _observe)
+    result = tasks.run_planning_cycle(cycle.id)
+
+    assert result["queued"] == 0
+    assert ("queue_selection", PlanningCycle.TriggerType.MANUAL) in observed
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_adhoc_metrics_default_to_scheduled(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: list[tuple[str, str]] = []
+
+    def _observe(stage: str, _duration: float, trigger_type: str) -> None:
+        observed.append((stage, trigger_type))
+
+    monkeypatch.setattr("fuelsense.core.tasks.observe_planning_stage", _observe)
+    result = tasks.run_planning_cycle()
+
+    assert result["queued"] == 0
+    assert ("queue_selection", PlanningCycle.TriggerType.SCHEDULED) in observed
+
+
+@pytest.mark.django_db
 def test_run_planning_cycle_idempotent_when_not_queued() -> None:
     cycle = PlanningCycle.objects.create(
         trigger_type=PlanningCycle.TriggerType.MANUAL,
@@ -872,6 +920,126 @@ def test_run_planning_cycle_parallel_many_depots_stress(monkeypatch: pytest.Monk
     assert result["deliveries_created"] == 20
     assert Delivery.objects.count() == 20
     assert DeliveryItem.objects.count() == 20
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_parallel_reuses_single_optimizer_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot_a = DepotFactory(latitude=24.0, longitude=46.0)
+    depot_b = DepotFactory(latitude=25.0, longitude=47.0)
+    VehicleFactory(depot=depot_a, is_available=True)
+    VehicleFactory(depot=depot_b, is_available=True)
+    facility_a = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0, latitude=24.1, longitude=46.1)
+    facility_b = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0, latitude=25.1, longitude=47.1)
+    DepotFacilityAssignmentFactory(depot=depot_a, facility=facility_a)
+    DepotFacilityAssignmentFactory(depot=depot_b, facility=facility_b)
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "0")
+
+    clients: list[object] = []
+
+    class _Client:
+        def __init__(self, timeout: float) -> None:
+            _ = timeout
+            self.closed = False
+            clients.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("fuelsense.core.tasks.httpx.Client", _Client)
+
+    seen_client_ids: set[int] = set()
+
+    def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
+        _ = payload
+        assert optimizer_client is not None
+        assert clients and optimizer_client is clients[0]
+        seen_client_ids.add(id(optimizer_client))
+        return {
+            "status": "optimal",
+            "routes": [
+                {
+                    "vehicle_index": 0,
+                    "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
+                    "distance_km": 20.0,
+                    "cost": 40.0,
+                }
+            ],
+            "total_distance_km": 20.0,
+            "total_cost": 40.0,
+            "vehicles_used": 1,
+            "solver_time_ms": 15.0,
+            "baseline_cost": 50.0,
+            "cost_reduction_pct": 20.0,
+        }
+
+    monkeypatch.setattr("fuelsense.core.tasks._run_optimizer", _run_optimizer)
+
+    result = tasks.run_planning_cycle()
+    assert result["deliveries_created"] == 2
+    assert len(clients) == 1
+    assert len(seen_client_ids) == 1
+    assert getattr(clients[0], "closed", False) is True
+
+
+@pytest.mark.django_db
+def test_run_planning_cycle_parallel_closes_optimizer_client_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot_a = DepotFactory(latitude=24.0, longitude=46.0)
+    depot_b = DepotFactory(latitude=25.0, longitude=47.0)
+    VehicleFactory(depot=depot_a, is_available=True)
+    VehicleFactory(depot=depot_b, is_available=True)
+    facility_a = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0, latitude=24.1, longitude=46.1)
+    facility_b = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0, latitude=25.1, longitude=47.1)
+    DepotFacilityAssignmentFactory(depot=depot_a, facility=facility_a)
+    DepotFacilityAssignmentFactory(depot=depot_b, facility=facility_b)
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_PARALLEL_DEPOTS", "1")
+    monkeypatch.setenv("FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS", "0")
+
+    clients: list[object] = []
+
+    class _Client:
+        def __init__(self, timeout: float) -> None:
+            _ = timeout
+            self.closed = False
+            clients.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("fuelsense.core.tasks.httpx.Client", _Client)
+
+    def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
+        assert optimizer_client is not None
+        if float(payload.get("depot_lat", 0.0)) > 24.5:
+            raise RuntimeError("parallel optimizer boom")
+        return {
+            "status": "optimal",
+            "routes": [
+                {
+                    "vehicle_index": 0,
+                    "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
+                    "distance_km": 20.0,
+                    "cost": 40.0,
+                }
+            ],
+            "total_distance_km": 20.0,
+            "total_cost": 40.0,
+            "vehicles_used": 1,
+            "solver_time_ms": 15.0,
+            "baseline_cost": 50.0,
+            "cost_reduction_pct": 20.0,
+        }
+
+    monkeypatch.setattr("fuelsense.core.tasks._run_optimizer", _run_optimizer)
+
+    result = tasks.run_planning_cycle()
+    assert result["failed_depots"] >= 1
+    assert len(clients) == 1
+    assert getattr(clients[0], "closed", False) is True
 
 
 @pytest.mark.django_db
@@ -1154,6 +1322,33 @@ def test_run_emergency_planning_cycle_partial_success_when_not_strict(monkeypatc
 
 
 @pytest.mark.django_db
+def test_run_emergency_planning_cycle_observes_emergency_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=1,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    observed: list[tuple[str, str]] = []
+
+    def _observe(stage: str, _duration: float, trigger_type: str) -> None:
+        observed.append((stage, trigger_type))
+
+    monkeypatch.setattr("fuelsense.core.tasks.observe_planning_stage", _observe)
+    monkeypatch.setenv("FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS", "1")
+
+    result = tasks.run_emergency_planning_cycle(cycle.id, [999999])
+    assert result["status"] == PlanningCycle.ExecutionStatus.FAILED
+    assert any(trigger == PlanningCycle.TriggerType.EMERGENCY for _, trigger in observed)
+
+
+@pytest.mark.django_db
 def test_run_emergency_planning_cycle_parallel_optimizer_exception_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     depot_a = DepotFactory(latitude=24.0, longitude=46.0)
     depot_b = DepotFactory(latitude=25.0, longitude=47.0)
@@ -1207,6 +1402,80 @@ def test_run_emergency_planning_cycle_parallel_optimizer_exception_branch(monkey
     assert result["deliveries_created"] == 1
     assert result["failed_facilities"] == 1
     assert result["partial_success"] is True
+
+
+@pytest.mark.django_db
+def test_run_emergency_planning_cycle_parallel_reuses_single_optimizer_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    depot_a = DepotFactory(latitude=24.0, longitude=46.0)
+    depot_b = DepotFactory(latitude=25.0, longitude=47.0)
+    VehicleFactory(depot=depot_a, is_available=True)
+    VehicleFactory(depot=depot_b, is_available=True)
+    facility_a = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0, latitude=24.1, longitude=46.1)
+    facility_b = FacilityFactory(current_inventory=40.0, dynamic_reorder_point=140.0, latitude=25.1, longitude=47.1)
+    DepotFacilityAssignmentFactory(depot=depot_a, facility=facility_a)
+    DepotFacilityAssignmentFactory(depot=depot_b, facility=facility_b)
+
+    cycle = PlanningCycle.objects.create(
+        trigger_type=PlanningCycle.TriggerType.EMERGENCY,
+        status=PlanningCycle.ExecutionStatus.QUEUED,
+        facilities_in_queue=2,
+        deliveries_created=0,
+        total_distance_km=0.0,
+        total_cost=0.0,
+        solver_time_ms=0.0,
+        baseline_cost=0.0,
+        cost_reduction_pct=0.0,
+    )
+
+    monkeypatch.setenv("FUELSENSE_ENABLE_REMOTE_OPTIMIZER", "1")
+    monkeypatch.setenv("FUELSENSE_EMERGENCY_PARALLEL", "1")
+    monkeypatch.setenv("FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS", "0")
+
+    clients: list[object] = []
+
+    class _Client:
+        def __init__(self, timeout: float) -> None:
+            _ = timeout
+            self.closed = False
+            clients.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("fuelsense.core.tasks.httpx.Client", _Client)
+
+    seen_client_ids: set[int] = set()
+
+    def _run_optimizer(payload: dict[str, object], optimizer_client: object | None = None) -> dict[str, object]:
+        _ = payload
+        assert optimizer_client is not None
+        assert clients and optimizer_client is clients[0]
+        seen_client_ids.add(id(optimizer_client))
+        return {
+            "status": "optimal",
+            "routes": [
+                {
+                    "vehicle_index": 0,
+                    "stops": [{"facility_index": 1, "demand": 90.0, "arrival_min": 240, "sequence": 1}],
+                    "distance_km": 20.0,
+                    "cost": 40.0,
+                }
+            ],
+            "total_distance_km": 20.0,
+            "total_cost": 40.0,
+            "vehicles_used": 1,
+            "solver_time_ms": 15.0,
+            "baseline_cost": 50.0,
+            "cost_reduction_pct": 20.0,
+        }
+
+    monkeypatch.setattr("fuelsense.core.tasks._run_optimizer", _run_optimizer)
+
+    result = tasks.run_emergency_planning_cycle(cycle.id, [facility_a.id, facility_b.id])
+    assert result["deliveries_created"] == 2
+    assert len(clients) == 1
+    assert len(seen_client_ids) == 1
+    assert getattr(clients[0], "closed", False) is True
 
 
 @pytest.mark.django_db
