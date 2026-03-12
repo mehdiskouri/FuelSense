@@ -140,8 +140,7 @@ def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
 
     outputs = _coerce_predictions(raw_predictions)
     responses = [
-        _to_forecast_response(item.facility_id, outputs[idx], elapsed_ms)
-        for idx, item in enumerate(request.requests)
+        _to_forecast_response(item.facility_id, outputs[idx], elapsed_ms) for idx, item in enumerate(request.requests)
     ]
     return BatchForecastResponse(
         responses=responses,
