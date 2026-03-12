@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import joblib
 import numpy as np
 
 
-class AnomalyType(str, Enum):
+class AnomalyType(StrEnum):
+    """Supported anomaly categories emitted by the detector."""
+
     LEAK = "LEAK"
     THEFT = "THEFT"
     EQUIPMENT_DEGRADATION = "EQUIPMENT_DEGRADATION"
@@ -20,10 +23,12 @@ class AnomalyType(str, Enum):
 
 
 class AnomalyDetector:
+    """Two-stage detector combining thresholding and learned classifiers."""
+
     Z_THRESHOLD = 3.0
     N_ESTIMATORS = 200
     CONTAMINATION = 0.05
-    feature_names = [
+    feature_names = (
         "z_score",
         "z_score_rolling_3d",
         "consumption_delta_pct",
@@ -31,28 +36,34 @@ class AnomalyDetector:
         "day_of_week",
         "hours_since_delivery",
         "inventory_level_pct",
-    ]
-    _TYPE_BY_LABEL = {
-        0: AnomalyType.LEAK,
-        1: AnomalyType.THEFT,
-        2: AnomalyType.EQUIPMENT_DEGRADATION,
-        3: AnomalyType.DEMAND_SHIFT,
-        4: AnomalyType.SENSOR_FAULT,
-    }
+    )
+    _TYPE_BY_LABEL = MappingProxyType(
+        {
+            0: AnomalyType.LEAK,
+            1: AnomalyType.THEFT,
+            2: AnomalyType.EQUIPMENT_DEGRADATION,
+            3: AnomalyType.DEMAND_SHIFT,
+            4: AnomalyType.SENSOR_FAULT,
+        },
+    )
 
     def __init__(self) -> None:
+        """Initialize unloaded detector components."""
         self.forest: Any | None = None
         self.classifier: Any | None = None
 
     @property
     def is_loaded(self) -> bool:
+        """Return whether both stage-two models are loaded."""
         return self.forest is not None and self.classifier is not None
 
     def load(self, forest_path: str | Path, classifier_path: str | Path) -> None:
+        """Load isolation forest and classifier artifacts from disk."""
         self.forest = joblib.load(Path(forest_path))
         self.classifier = joblib.load(Path(classifier_path))
 
     def detect(self, actual: float, predicted: float, rolling_std: float, features: dict[str, float]) -> dict[str, Any]:
+        """Detect anomalies using z-score gate then model-based classification."""
         std = max(abs(float(rolling_std)), 1e-6)
         z_score = (float(actual) - float(predicted)) / std
 
@@ -67,7 +78,8 @@ class AnomalyDetector:
             }
 
         vector = np.asarray(
-            [[self._feature_value(name, z_score, features) for name in self.feature_names]], dtype=np.float32,
+            [[self._feature_value(name, z_score, features) for name in self.feature_names]],
+            dtype=np.float32,
         )
 
         if self.forest is None or self.classifier is None:
@@ -108,6 +120,7 @@ class AnomalyDetector:
 
     @staticmethod
     def _feature_value(name: str, z_score: float, features: dict[str, float]) -> float:
+        """Resolve one model feature value with robust numeric fallback."""
         if name == "z_score":
             return float(z_score)
         raw = features.get(name, 0.0)

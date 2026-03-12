@@ -5,13 +5,17 @@ from __future__ import annotations
 import hashlib
 import math
 import os
-from datetime import time
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from django.core.cache import cache
 
 from fuelsense.core.reorder import get_effective_reorder_point
+
+if TYPE_CHECKING:
+    from datetime import time
+
+    from fuelsense.core.models import Depot, Facility
 
 
 def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -28,26 +32,31 @@ def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 def _time_to_minutes(value: time | None, default: int) -> int:
     if value is None:
         return default
-    return int(value.hour * 60 + value.minute)
+    hour = int(value.hour)
+    minute = int(value.minute)
+    return int(hour * 60 + minute)
 
 
-def _distance_matrix_cache_key(depot: Any, facilities: list[Any]) -> str:
+def _distance_matrix_cache_key(depot: Depot, facilities: list[Facility]) -> str:
+    depot_id = int(depot.id)
+    depot_lat = float(depot.latitude)
+    depot_lng = float(depot.longitude)
     parts: list[str] = [
-        f"depot:{int(getattr(depot, 'id', 0))}",
-        f"dlat:{float(depot.latitude):.6f}",
-        f"dlng:{float(depot.longitude):.6f}",
+        f"depot:{depot_id}",
+        f"dlat:{depot_lat:.6f}",
+        f"dlng:{depot_lng:.6f}",
     ]
-    for facility in facilities:
-        parts.append(
-            "|".join(
-                [
-                    str(int(facility.id)),
-                    f"{float(facility.latitude):.6f}",
-                    f"{float(facility.longitude):.6f}",
-                ],
-            ),
+    parts.extend(
+        "|".join(
+            [
+                str(int(facility.id)),
+                f"{float(facility.latitude):.6f}",
+                f"{float(facility.longitude):.6f}",
+            ],
         )
-    digest = hashlib.sha1(";".join(parts).encode("utf-8")).hexdigest()
+        for facility in facilities
+    )
+    digest = hashlib.sha256(";".join(parts).encode("utf-8")).hexdigest()
     return f"cache:routing:distance_matrix:{digest}"
 
 
@@ -63,24 +72,22 @@ def _compute_distance_matrix(coords: list[tuple[float, float]]) -> list[list[flo
     return (6371.0 * c).tolist()
 
 
-def build_optimizer_request(depot: Any, facilities: list[Any]) -> tuple[dict[str, object], dict[int, int]]:
+def build_optimizer_request(depot: Depot, facilities: list[Facility]) -> tuple[dict[str, object], dict[int, int]]:
+    """Build optimizer payload and facility-index mapping for a depot batch."""
     coords: list[tuple[float, float]] = [(float(depot.latitude), float(depot.longitude))]
     stops: list[dict[str, object]] = []
     facility_index_map: dict[int, int] = {}
 
     for idx, facility in enumerate(facilities, start=1):
         coords.append((float(facility.latitude), float(facility.longitude)))
-        reorder_point = get_effective_reorder_point(
-            getattr(facility, "dynamic_reorder_point", None),
-            float(getattr(facility, "min_safe_inventory", 0.0)),
-        )
+        reorder_point = get_effective_reorder_point(facility.dynamic_reorder_point, float(facility.min_safe_inventory))
         demand = max(float(reorder_point) - float(facility.current_inventory), 0.0)
         stops.append(
             {
                 "facility_index": idx,
                 "demand": float(demand),
-                "time_window_start": _time_to_minutes(getattr(facility, "delivery_window_start", None), 0),
-                "time_window_end": _time_to_minutes(getattr(facility, "delivery_window_end", None), 24 * 60),
+                "time_window_start": _time_to_minutes(facility.delivery_window_start, 0),
+                "time_window_end": _time_to_minutes(facility.delivery_window_end, 24 * 60),
                 "service_time": 30,
             },
         )
