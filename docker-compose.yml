@@ -50,7 +50,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q default --loglevel=info -c 4
+    command: celery -A fuelsense worker -Q default --loglevel=info
     env_file: .env.example
     healthcheck:
       test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]
@@ -68,7 +68,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q training --loglevel=info -c 2
+    command: celery -A fuelsense worker -Q training --loglevel=info
     env_file: .env.example
     healthcheck:
       test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]
@@ -86,7 +86,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q planning --loglevel=info -c 4
+    command: celery -A fuelsense worker -Q planning --loglevel=info
     env_file: .env.example
     healthcheck:
       test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]

@@ -25,15 +25,23 @@ data:
   FUELSENSE_FORECAST_BATCH_SIZE_GPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_BATCH_SIZE_GPU | default "256" | quote }}
   FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_CPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_CPU | default "32" | quote }}
   FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_GPU: {{ .Values.forecaster.env.FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_GPU | default "512" | quote }}
-  FUELSENSE_FORECAST_CPU_THREADS: {{ .Values.forecaster.env.FUELSENSE_FORECAST_CPU_THREADS | default "46" | quote }}
-  FUELSENSE_FORECAST_CPU_WORKERS: {{ .Values.forecaster.env.FUELSENSE_FORECAST_CPU_WORKERS | default "32" | quote }}
+  {{- if hasKey .Values.forecaster.env "FUELSENSE_FORECAST_CPU_THREADS" }}
+  FUELSENSE_FORECAST_CPU_THREADS: {{ .Values.forecaster.env.FUELSENSE_FORECAST_CPU_THREADS | quote }}
+  {{- end }}
+  {{- if hasKey .Values.forecaster.env "FUELSENSE_FORECAST_CPU_WORKERS" }}
+  FUELSENSE_FORECAST_CPU_WORKERS: {{ .Values.forecaster.env.FUELSENSE_FORECAST_CPU_WORKERS | quote }}
+  {{- end }}
   FUELSENSE_OPTIMIZER_BACKEND: {{ .Values.optimizer.env.FUELSENSE_OPTIMIZER_BACKEND | default "ortools" | quote }}
   FUELSENSE_OPTIMIZER_TIME_LIMIT_MS: {{ .Values.optimizer.env.FUELSENSE_OPTIMIZER_TIME_LIMIT_MS | default "10000" | quote }}
   FUELSENSE_OPTIMIZER_N_PARALLEL: {{ .Values.optimizer.env.FUELSENSE_OPTIMIZER_N_PARALLEL | default "64" | quote }}
   FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS: {{ .Values.optimizer.env.FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS | default "1000" | quote }}
   FUELSENSE_PLANNING_PARALLEL_DEPOTS: {{ .Values.planning.env.FUELSENSE_PLANNING_PARALLEL_DEPOTS | default "1" | quote }}
-  FUELSENSE_PLANNING_PARALLEL_WORKERS: {{ .Values.planning.env.FUELSENSE_PLANNING_PARALLEL_WORKERS | default "46" | quote }}
   FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS: {{ .Values.planning.env.FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS | default "1" | quote }}
   FUELSENSE_EMERGENCY_PARALLEL: {{ .Values.planning.env.FUELSENSE_EMERGENCY_PARALLEL | default "1" | quote }}
-  FUELSENSE_EMERGENCY_PARALLEL_WORKERS: {{ .Values.planning.env.FUELSENSE_EMERGENCY_PARALLEL_WORKERS | default "46" | quote }}
   FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS: {{ .Values.planning.env.FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS | default "1" | quote }}
+  {{- if hasKey .Values.planning.env "FUELSENSE_PLANNING_PARALLEL_WORKERS" }}
+  FUELSENSE_PLANNING_PARALLEL_WORKERS: {{ .Values.planning.env.FUELSENSE_PLANNING_PARALLEL_WORKERS | quote }}
+  {{- end }}
+  {{- if hasKey .Values.planning.env "FUELSENSE_EMERGENCY_PARALLEL_WORKERS" }}
+  FUELSENSE_EMERGENCY_PARALLEL_WORKERS: {{ .Values.planning.env.FUELSENSE_EMERGENCY_PARALLEL_WORKERS | quote }}
+  {{- end }}
