@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -19,6 +20,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from forecaster.model import DemandTCN, QuantileLoss
 from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import register_backend
+
+
+logger = logging.getLogger(__name__)
 
 
 def _cuda_autocast() -> Any:
@@ -121,8 +125,8 @@ class CUDAForecaster(ComputeBackend):
         try:
             torch_compile: Any = torch.compile
             self.model = torch_compile(self.model, mode="reduce-overhead")
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - depends on torch/cuda runtime capabilities
+            logger.debug("torch.compile unavailable for CUDA forecaster model: %s", exc)
 
         self.warmup()
 
@@ -132,15 +136,14 @@ class CUDAForecaster(ComputeBackend):
 
         np_in = np.asarray(lookback, dtype=np.float32)
         cpu_tensor = torch.from_numpy(np_in)
-        if np_in.shape[0] > 1:
+        pin_threshold_bytes = int(os.environ.get("FUELSENSE_FORECAST_PIN_MEMORY_MIN_BYTES", "4096"))
+        if np_in.nbytes >= max(pin_threshold_bytes, 0):
             cpu_tensor = cpu_tensor.pin_memory()
 
         with torch.cuda.stream(self.stream), torch.no_grad(), _cuda_autocast():
             gpu_tensor = cpu_tensor.to(self.cuda_device, non_blocking=True)
             preds = self.model(gpu_tensor)
             preds_cpu = preds.detach().cpu()
-
-        self.stream.synchronize()
         return preds_cpu.numpy()
 
     def train(
@@ -185,7 +188,7 @@ class CUDAForecaster(ComputeBackend):
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
         best_val = float("inf")
-        best_state_cpu: dict[str, Tensor] | None = None
+        best_state_device: dict[str, Tensor] | None = None
         stale_epochs = 0
 
         for _epoch in range(epochs):
@@ -222,7 +225,7 @@ class CUDAForecaster(ComputeBackend):
 
             if val_loss < best_val:
                 best_val = val_loss
-                best_state_cpu = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                best_state_device = {k: v.detach().clone() for k, v in model.state_dict().items()}
                 stale_epochs = 0
             else:
                 stale_epochs += 1
@@ -231,8 +234,8 @@ class CUDAForecaster(ComputeBackend):
             if stale_epochs >= patience:
                 break
 
-        if best_state_cpu is not None:
-            model.load_state_dict(best_state_cpu)
+        if best_state_device is not None:
+            model.load_state_dict(best_state_device)
 
         self.model = model
         self.model.eval()

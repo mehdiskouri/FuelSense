@@ -166,6 +166,7 @@ class Delivery(models.Model):
     total_cost = models.FloatField(null=True)
     route_json = models.JSONField(null=True)
     solver_time_ms = models.FloatField(null=True)
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True, unique=True, db_index=True)
     created_by_planning_cycle = models.ForeignKey(PlanningCycle, null=True, on_delete=models.SET_NULL)
 
     def __str__(self) -> str:

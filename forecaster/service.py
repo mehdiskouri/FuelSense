@@ -30,6 +30,12 @@ INFERENCE_LATENCY = Histogram(
     "Inference latency in milliseconds for demand forecaster",
     buckets=(0.5, 1, 2, 5, 10, 25, 50, 100),
 )
+BATCH_INFERENCE_LATENCY = Histogram(
+    "forecaster_batch_inference_latency_ms",
+    "Batch inference latency in milliseconds for demand forecaster",
+    labelnames=("batch_size",),
+    buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000),
+)
 MODEL_VERSION = Gauge("forecaster_model_version", "Model version gauge for demand forecaster")
 DEVICE_INFO = Gauge("forecaster_device_gpu", "1 if CUDA is active, 0 for CPU")
 
@@ -128,12 +134,13 @@ def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
     start = perf_counter()
     raw_predictions = cast(Any, backend).predict(batch_input)
     elapsed_ms = (perf_counter() - start) * 1000
-    INFERENCE_LATENCY.observe(elapsed_ms)
+    batch_size = len(request.requests)
+    BATCH_INFERENCE_LATENCY.labels(batch_size=str(batch_size)).observe(elapsed_ms)
+    INFERENCE_LATENCY.observe(elapsed_ms / max(batch_size, 1))
 
     outputs = _coerce_predictions(raw_predictions)
     responses = [
-        _to_forecast_response(item.facility_id, outputs[idx], elapsed_ms / max(len(request.requests), 1))
-        for idx, item in enumerate(request.requests)
+        _to_forecast_response(item.facility_id, outputs[idx], elapsed_ms) for idx, item in enumerate(request.requests)
     ]
     return BatchForecastResponse(
         responses=responses,

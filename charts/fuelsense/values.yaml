@@ -51,7 +51,7 @@ celery:
         memory: 4Gi
   planning:
     replicas: 1
-    concurrency: 1
+    concurrency: 4
     resources:
       requests:
         cpu: 500m
@@ -77,6 +77,8 @@ forecaster:
     FUELSENSE_DEVICE: cpu
     FUELSENSE_FORECAST_BATCH_SIZE_CPU: "16"
     FUELSENSE_FORECAST_TRAINING_BATCH_SIZE_CPU: "32"
+    FUELSENSE_FORECAST_CPU_THREADS: "46"
+    FUELSENSE_FORECAST_CPU_WORKERS: "32"
   resources:
     requests:
       cpu: 250m
@@ -110,6 +112,17 @@ optimizer:
     FUELSENSE_DEVICE: cpu
     FUELSENSE_OPTIMIZER_BACKEND: ortools
     FUELSENSE_OPTIMIZER_TIME_LIMIT_MS: "10000"
+    FUELSENSE_OPTIMIZER_N_PARALLEL: "64"
+    FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS: "1000"
+
+planning:
+  env:
+    FUELSENSE_PLANNING_PARALLEL_DEPOTS: "1"
+    FUELSENSE_PLANNING_PARALLEL_WORKERS: "46"
+    FUELSENSE_PLANNING_STRICT_DEPOT_SUCCESS: "1"
+    FUELSENSE_EMERGENCY_PARALLEL: "1"
+    FUELSENSE_EMERGENCY_PARALLEL_WORKERS: "46"
+    FUELSENSE_EMERGENCY_STRICT_FACILITY_SUCCESS: "1"
   resources:
     requests:
       cpu: 500m

@@ -86,7 +86,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.django
-    command: celery -A fuelsense worker -Q planning --loglevel=info -c 1
+    command: celery -A fuelsense worker -Q planning --loglevel=info -c 4
     env_file: .env.example
     healthcheck:
       test: ["CMD-SHELL", "celery -A fuelsense inspect ping -d celery@$$HOSTNAME | grep -q pong"]

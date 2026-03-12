@@ -30,8 +30,8 @@ def _tie_matrix(n: int = 8) -> list[list[float]]:
 def test_nearest_neighbor_init_produces_diverse_solutions() -> None:
     backend = CUDARouteOptimizer()
     dist = torch.as_tensor(_tie_matrix(9), dtype=torch.float32, device=backend.cuda_device)
-    routes = backend._nearest_neighbor_init(dist, backend.N_PARALLEL)
-    assert routes.shape == (backend.N_PARALLEL, 9)
+    routes = backend._nearest_neighbor_init(dist, backend.n_parallel)
+    assert routes.shape == (backend.n_parallel, 9)
     unique = torch.unique(routes, dim=0)
     assert unique.shape[0] > 1
 
@@ -70,7 +70,7 @@ def test_2opt_improves_initial_route_cost() -> None:
 
 def test_solver_converges_and_returns_cuda_output() -> None:
     backend = CUDARouteOptimizer()
-    backend.MAX_ITERATIONS = 50
+    backend.max_iterations = 50
     vehicles = [{"capacity": 300.0, "cost_per_km": 2.0} for _ in range(2)]
     stops = [
         {"facility_index": i, "demand": 40.0, "time_window_start": 0, "time_window_end": 480, "service_time": 30}
@@ -149,10 +149,10 @@ def test_solve_breaks_on_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_solve_infeasible_when_splitting_exhausts_vehicles(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = CUDARouteOptimizer()
-    backend.MAX_ITERATIONS = 0
+    backend.max_iterations = 0
 
     def _fixed_init(_dist: torch.Tensor, _n: int) -> torch.Tensor:
-        return torch.tensor([[0, 1, 2]], dtype=torch.long, device=backend.cuda_device).repeat(backend.N_PARALLEL, 1)
+        return torch.tensor([[0, 1, 2]], dtype=torch.long, device=backend.cuda_device).repeat(backend.n_parallel, 1)
 
     monkeypatch.setattr(backend, "_nearest_neighbor_init", _fixed_init)
     vehicles = [{"capacity": 100.0, "cost_per_km": 1.0}]
@@ -166,10 +166,10 @@ def test_solve_infeasible_when_splitting_exhausts_vehicles(monkeypatch: pytest.M
 
 def test_solve_infeasible_when_single_stop_demand_exceeds_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = CUDARouteOptimizer()
-    backend.MAX_ITERATIONS = 0
+    backend.max_iterations = 0
 
     def _fixed_init(_dist: torch.Tensor, _n: int) -> torch.Tensor:
-        return torch.tensor([[0, 1]], dtype=torch.long, device=backend.cuda_device).repeat(backend.N_PARALLEL, 1)
+        return torch.tensor([[0, 1]], dtype=torch.long, device=backend.cuda_device).repeat(backend.n_parallel, 1)
 
     monkeypatch.setattr(backend, "_nearest_neighbor_init", _fixed_init)
     vehicles = [{"capacity": 20.0, "cost_per_km": 1.0}]

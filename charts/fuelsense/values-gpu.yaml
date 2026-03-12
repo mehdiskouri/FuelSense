@@ -32,6 +32,8 @@ optimizer:
   env:
     FUELSENSE_DEVICE: cuda
     FUELSENSE_CUDA_MEMORY_FRACTION: "0.5"
+    FUELSENSE_OPTIMIZER_N_PARALLEL: "64"
+    FUELSENSE_OPTIMIZER_GPU_MAX_ITERATIONS: "1000"
   nodeSelector:
     accelerator: nvidia
   tolerations:

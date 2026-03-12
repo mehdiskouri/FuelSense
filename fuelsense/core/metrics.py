@@ -31,6 +31,16 @@ retraining_triggered_total = Counter(
     labelnames=("facility_id", "model_type"),
 )
 
+planning_stage_duration_seconds = Histogram(
+    "planning_stage_duration_seconds",
+    "Planning pipeline stage duration",
+    labelnames=("stage", "trigger_type"),
+)
+
+
+def observe_planning_stage(stage: str, duration_seconds: float, trigger_type: str) -> None:
+    planning_stage_duration_seconds.labels(stage=stage, trigger_type=trigger_type).observe(duration_seconds)
+
 
 def refresh_business_gauges() -> None:
     from django.db.models import Avg
