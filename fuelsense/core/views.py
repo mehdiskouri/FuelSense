@@ -136,6 +136,12 @@ class PlanningViewSet(viewsets.ViewSet):
         trigger_type = serializer.validated_data["trigger_type"]
         facility_ids = serializer.validated_data.get("facility_ids", [])
 
+        if trigger_type == "EMERGENCY" and not facility_ids:
+            return Response(
+                {"facility_ids": ["Provide at least one facility id for EMERGENCY trigger."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         cycle = PlanningCycle.objects.create(
             trigger_type=trigger_type,
             status=PlanningCycle.ExecutionStatus.QUEUED,

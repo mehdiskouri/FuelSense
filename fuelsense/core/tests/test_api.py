@@ -8,7 +8,7 @@ import pytest
 from django.core.cache import cache
 from django.test import Client
 
-from fuelsense.core.models import Delivery, ModelRegistry
+from fuelsense.core.models import Delivery, ModelRegistry, PlanningCycle
 from fuelsense.core.tests.factories import (
     AnomalyAlertFactory,
     DeliveryFactory,
@@ -168,6 +168,79 @@ def test_planning_trigger_emergency_dispatch(api_client: Any, monkeypatch: pytes
     )
     assert trig.status_code == 202
     assert "fuelsense.core.tasks.run_emergency_planning_cycle" in called["tasks"][0]
+
+
+@pytest.mark.django_db
+def test_planning_trigger_emergency_rejects_empty_facility_ids(
+    api_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: dict[str, list[str]] = {"tasks": []}
+
+    def fake_send_task(name: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> None:
+        _ = args
+        called["tasks"].append(f"{name}:{kwargs}")
+
+    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
+    before_count = PlanningCycle.objects.count()
+
+    trig = api_client.post(
+        "/api/v1/planning/trigger/",
+        {"trigger_type": "EMERGENCY", "facility_ids": []},
+        format="json",
+    )
+
+    assert trig.status_code == 400
+    assert "facility_ids" in trig.data
+    assert PlanningCycle.objects.count() == before_count
+    assert called["tasks"] == []
+
+
+@pytest.mark.django_db
+def test_planning_trigger_emergency_rejects_missing_facility_ids(
+    api_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: dict[str, list[str]] = {"tasks": []}
+
+    def fake_send_task(name: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> None:
+        _ = args
+        called["tasks"].append(f"{name}:{kwargs}")
+
+    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
+    before_count = PlanningCycle.objects.count()
+
+    trig = api_client.post(
+        "/api/v1/planning/trigger/",
+        {"trigger_type": "EMERGENCY"},
+        format="json",
+    )
+
+    assert trig.status_code == 400
+    assert "facility_ids" in trig.data
+    assert PlanningCycle.objects.count() == before_count
+    assert called["tasks"] == []
+
+
+@pytest.mark.django_db
+def test_planning_trigger_emergency_rejects_null_facility_ids(api_client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    called: dict[str, list[str]] = {"tasks": []}
+
+    def fake_send_task(name: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> None:
+        _ = args
+        called["tasks"].append(f"{name}:{kwargs}")
+
+    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
+    before_count = PlanningCycle.objects.count()
+
+    trig = api_client.post(
+        "/api/v1/planning/trigger/",
+        {"trigger_type": "EMERGENCY", "facility_ids": None},
+        format="json",
+    )
+
+    assert trig.status_code == 400
+    assert "facility_ids" in trig.data
+    assert PlanningCycle.objects.count() == before_count
+    assert called["tasks"] == []
 
 
 @pytest.mark.django_db
