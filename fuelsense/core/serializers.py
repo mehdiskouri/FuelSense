@@ -158,7 +158,16 @@ class PlanningCycleSerializer(serializers.ModelSerializer):
 
 class PlanningTriggerSerializer(serializers.Serializer):
     trigger_type = serializers.ChoiceField(choices=["MANUAL", "EMERGENCY"])
-    facility_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
+    facility_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_null=True)
+
+    def validate(self, attrs: dict[str, object]) -> dict[str, object]:
+        trigger_type = attrs.get("trigger_type")
+        facility_ids = attrs.get("facility_ids")
+        if trigger_type == "EMERGENCY" and not facility_ids:
+            raise serializers.ValidationError(
+                {"facility_ids": "Provide at least one facility id for EMERGENCY trigger."}
+            )
+        return attrs
 
 
 class ModelRegistrySerializer(serializers.ModelSerializer):
