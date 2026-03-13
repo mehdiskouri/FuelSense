@@ -7,7 +7,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from time import perf_counter
-from typing import override
 
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
@@ -189,9 +188,9 @@ class ORToolsOptimizer(ComputeBackend):
                 to_node = manager.IndexToNode(int(to_index))
             except OverflowError:  # pragma: no cover
                 return 0
-            travel_time = time_input.travel_minutes[from_node][to_node]
+            travel_time = int(time_input.travel_minutes[from_node][to_node])
             service_minutes = int(time_input.service_times.get(to_node, 0)) if to_node != 0 else 0
-            return travel_time + service_minutes
+            return int(travel_time + service_minutes)
 
         time_callback_idx = routing.RegisterTransitCallback(time_callback)
         routing.AddDimension(
@@ -293,8 +292,7 @@ class ORToolsOptimizer(ComputeBackend):
             "cost_reduction_pct": float(cost_reduction_pct),
         }
 
-    @override
-    def solve(
+    def solve(  # noqa: PLR0913
         self,
         depot_lat: float,
         depot_lng: float,

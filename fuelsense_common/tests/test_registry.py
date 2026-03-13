@@ -33,6 +33,7 @@ class _CudaBackend(_BaseBackend):
 
 def test_register_and_get_backend_round_trip_cpu() -> None:
     """CPU backend registration should round-trip through lookup."""
+
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -45,6 +46,7 @@ def test_register_and_get_backend_round_trip_cpu() -> None:
 
 def test_get_backend_prefers_requested_cuda() -> None:
     """Lookup should return CUDA backend when one is explicitly registered."""
+
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -61,6 +63,7 @@ def test_get_backend_prefers_requested_cuda() -> None:
 
 def test_get_backend_falls_back_to_cpu() -> None:
     """CUDA lookup should fall back to CPU when CUDA is unavailable."""
+
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -79,6 +82,7 @@ def test_get_backend_raises_when_missing() -> None:
 
 def test_registry_supports_multiple_services() -> None:
     """Backend registry should isolate registrations by service name."""
+
     @register_backend("forecaster", DeviceType.CPU)
     class ForecasterCpu(_CpuBackend):
         pass
@@ -96,6 +100,7 @@ def test_registry_supports_multiple_services() -> None:
 
 def test_clear_registry_resets_state() -> None:
     """Registry clear operation should remove previously registered backends."""
+
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -111,6 +116,7 @@ def test_clear_registry_resets_state() -> None:
 
 def test_registered_backend_is_compute_backend() -> None:
     """Registered backends should satisfy the shared `ComputeBackend` contract."""
+
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass

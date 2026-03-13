@@ -19,6 +19,7 @@ known-first-party = ["fuelsense", "fuelsense_common", "forecaster", "anomaly", "
 python_version = "3.13"
 plugins = ["mypy_django_plugin.main"]
 strict = true
+mypy_path = "typings"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = false

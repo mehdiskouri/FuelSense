@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 
 from forecaster.model import CausalConv1d, DemandTCN, QuantileLoss
@@ -28,7 +30,8 @@ def test_causal_conv_no_future_leakage() -> None:
     conv = CausalConv1d(in_channels=1, out_channels=1, kernel_size=3, dilation=1)
     conv.conv.weight.data.fill_(1.0)
     _check(conv.conv.bias is not None, "Convolution bias should be initialized")
-    conv.conv.bias.data.zero_()
+    bias = cast("torch.Tensor", conv.conv.bias)
+    bias.data.zero_()
 
     x1 = torch.zeros(1, 1, 10)
     x2 = x1.clone()

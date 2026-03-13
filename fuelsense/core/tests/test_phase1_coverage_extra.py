@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from typing import TYPE_CHECKING, cast
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
@@ -19,11 +20,11 @@ from fuelsense.core.cache import (
     invalidate_facility_cache,
 )
 from fuelsense.core.tests.factories import (
-    DeliveryFactory,
-    DeliveryItemFactory,
-    ForecastFactory,
-    InventoryLogFactory,
-    ModelRegistryFactory,
+    create_delivery,
+    create_delivery_item,
+    create_forecast,
+    create_inventory_log,
+    create_model_registry,
 )
 
 if TYPE_CHECKING:
@@ -44,10 +45,10 @@ def _check(condition: object, message: str | None = None) -> None:
 def test_cache_helpers_and_metrics_refresh(sample_facilities: list[object]) -> None:
     """Cache helpers and gauge refresh should execute on seeded facility data."""
     f = cast("Facility", sample_facilities[0])
-    facility_id = cast("int", f.pk)
-    InventoryLogFactory(facility=f)
-    ForecastFactory(facility=f)
-    DeliveryFactory()
+    facility_id = f.pk
+    create_inventory_log(facility=f)
+    create_forecast(facility=f)
+    create_delivery()
     val = get_or_set_facility_inventory(facility_id)
     _check(isinstance(val, float))
     status = get_or_set_reorder_status(facility_id)
@@ -60,24 +61,32 @@ def test_cache_helpers_and_metrics_refresh(sample_facilities: list[object]) -> N
 @pytest.mark.django_db
 def test_admin_actions_and_change_views(admin_client: Client) -> None:
     """Admin change pages for facility and delivery should be reachable."""
-    facility = ModelRegistryFactory().facility
-    InventoryLogFactory(facility=facility)
-    ForecastFactory(facility=facility)
+    facility = create_model_registry().facility
+    _check(facility is not None)
+    if facility is None:
+        msg = "Expected model registry facility"
+        raise AssertionError(msg)
+    create_inventory_log(facility=facility)
+    create_forecast(facility=facility)
     fac_resp = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
     _check(fac_resp.status_code == HTTP_OK)
 
-    d = DeliveryFactory()
-    DeliveryItemFactory(delivery=d, facility=facility)
+    d = create_delivery()
+    create_delivery_item(delivery=d, facility=facility)
     del_resp = admin_client.get(f"/admin/core/delivery/{d.id}/change/")
     _check(del_resp.status_code == HTTP_OK)
 
 
 @pytest.mark.django_db
-def test_model_registry_admin_actions(admin_client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_registry_admin_actions(admin_client: Client) -> None:
     """Model registry admin actions should execute and return successful responses."""
-    m1 = ModelRegistryFactory(version=1)
-    m2 = ModelRegistryFactory(facility=m1.facility, model_type=m1.model_type, version=2)
+    m1 = create_model_registry(version=1)
+    m2 = create_model_registry(facility=m1.facility, model_type=m1.model_type, version=2)
     facility = m1.facility
+    _check(facility is not None)
+    if facility is None:
+        msg = "Expected model registry facility"
+        raise AssertionError(msg)
 
     promote_resp = admin_client.post(
         "/admin/core/modelregistry/",
@@ -102,16 +111,15 @@ def test_model_registry_admin_actions(admin_client: Client, monkeypatch: pytest.
     def _noop_send_task(*args: object, **kwargs: object) -> None:
         _ = args, kwargs
 
-    monkeypatch.setattr("celery.current_app.send_task", _noop_send_task, raising=False)
-
-    emergency_resp = admin_client.post(
-        "/admin/core/facility/",
-        {
-            "action": "trigger_emergency_delivery",
-            "_selected_action": [str(facility.id)],
-        },
-        follow=True,
-    )
+    with patch("celery.current_app.send_task", side_effect=_noop_send_task):
+        emergency_resp = admin_client.post(
+            "/admin/core/facility/",
+            {
+                "action": "trigger_emergency_delivery",
+                "_selected_action": [str(facility.id)],
+            },
+            follow=True,
+        )
     _check(emergency_resp.status_code == HTTP_OK)
 
 
@@ -127,7 +135,7 @@ def test_health_and_ready_endpoints() -> None:
 def test_cache_helper_branches(sample_facilities: list[object]) -> None:
     """Type guards and cached helper branches should behave predictably."""
     facility = cast("Facility", sample_facilities[0])
-    facility_id = cast("int", facility.pk)
+    facility_id = facility.pk
 
     # Direct helper branch coverage.
     _check(_to_float(None) == 0.0)

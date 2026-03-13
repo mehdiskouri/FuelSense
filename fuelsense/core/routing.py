@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from django.core.cache import cache
@@ -69,7 +69,7 @@ def _compute_distance_matrix(coords: list[tuple[float, float]]) -> list[list[flo
     a = np.sin(d_lat / 2.0) ** 2 + np.cos(lat_rad)[:, None] * np.cos(lat_rad)[None, :] * np.sin(d_lon / 2.0) ** 2
     a = np.clip(a, 0.0, 1.0)
     c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a))
-    return (6371.0 * c).tolist()
+    return cast("list[list[float]]", (6371.0 * c).tolist())
 
 
 def build_optimizer_request(depot: Depot, facilities: list[Facility]) -> tuple[dict[str, object], dict[int, int]]:
@@ -98,7 +98,7 @@ def build_optimizer_request(depot: Depot, facilities: list[Facility]) -> tuple[d
         cache_key = _distance_matrix_cache_key(depot, facilities)
         cached_matrix = cache.get(cache_key)
         if isinstance(cached_matrix, list):
-            matrix = cached_matrix
+            matrix = cast("list[list[float]]", cached_matrix)
         else:
             matrix = _compute_distance_matrix(coords)
             cache_ttl = int(os.environ.get("FUELSENSE_ROUTING_MATRIX_CACHE_TTL", "600"))

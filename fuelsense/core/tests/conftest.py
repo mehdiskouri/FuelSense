@@ -5,19 +5,20 @@ from __future__ import annotations
 import datetime as dt
 import importlib
 import secrets
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from fuelsense.core.models import InventoryLog
-from fuelsense.core.tests.factories import FacilityFactory
+from fuelsense.core.tests.factories import create_facility
 
 if TYPE_CHECKING:
     from django.conf import LazySettings
-    from django.contrib.auth.base_user import AbstractBaseUser
     from django.test.client import Client
+
+    from fuelsense.core import models
 
 
 DEFAULT_SAMPLE_FACILITY_COUNT = 5
@@ -74,8 +75,9 @@ def _user_manager() -> _UserManager:
 
 
 @pytest.fixture
-def api_client(_db: object) -> object:
+def api_client(db: object) -> object:
     """Create authenticated DRF client fixture using token auth credentials."""
+    _ = db
     generated_password = secrets.token_urlsafe(12)
     user = _user_manager().create_user(username="apiuser", password=generated_password)
     token, _ = _token_model().objects.get_or_create(user=user)
@@ -97,22 +99,25 @@ def use_locmem_cache(settings: object) -> None:
 
 
 @pytest.fixture
-def admin_client(_db: object, client: Client) -> Client:
+def admin_client(db: object, client: Client) -> Client:
     """Create authenticated Django admin client fixture with superuser login."""
+    _ = db
     user = _user_manager().create_superuser("admin", "admin@example.com", "adminpass")
-    client.force_login(cast("AbstractBaseUser", user))
+    client.force_login(cast("Any", user))
     return client
 
 
 @pytest.fixture
-def sample_facilities(_db: object) -> list[object]:
+def sample_facilities(db: object) -> list[models.Facility]:
     """Create a default set of facilities used across dashboard/cache tests."""
-    return [FacilityFactory() for _ in range(DEFAULT_SAMPLE_FACILITY_COUNT)]
+    _ = db
+    return [create_facility() for _ in range(DEFAULT_SAMPLE_FACILITY_COUNT)]
 
 
 @pytest.fixture
-def sample_inventory_logs(_db: object, sample_facilities: list[object]) -> list[InventoryLog]:
+def sample_inventory_logs(db: object, sample_facilities: list[models.Facility]) -> list[InventoryLog]:
     """Create default rolling inventory logs for the first sample facility."""
+    _ = db
     facility = sample_facilities[0]
     base = timezone.now()
     return [

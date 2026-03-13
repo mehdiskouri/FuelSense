@@ -8,17 +8,17 @@ from django.utils import timezone
 
 from fuelsense.core.models import Facility, InventoryLog
 from fuelsense.core.tests.factories import (
-    AnomalyAlertFactory,
-    DeliveryFactory,
-    DepotFacilityAssignmentFactory,
-    DepotFactory,
-    FacilityFactory,
-    ForecastFactory,
-    FuelTypeFactory,
-    InventoryLogFactory,
-    ModelRegistryFactory,
-    PlanningCycleFactory,
-    VehicleFactory,
+    create_anomaly_alert,
+    create_delivery,
+    create_depot,
+    create_depot_facility_assignment,
+    create_facility,
+    create_forecast,
+    create_fuel_type,
+    create_inventory_log,
+    create_model_registry,
+    create_planning_cycle,
+    create_vehicle,
 )
 
 MIN_SAFE_POINT = 200.0
@@ -33,22 +33,22 @@ def _check(condition: object, message: str | None = None) -> None:
 @pytest.mark.django_db
 def test_model_creation_smoke() -> None:
     """Factory smoke test should create core model records successfully."""
-    FuelTypeFactory()
-    facility = FacilityFactory()
-    DepotFactory(fuel_type=facility.fuel_type)
-    VehicleFactory()
-    InventoryLogFactory(facility=facility)
-    DeliveryFactory()
-    ForecastFactory(facility=facility)
-    AnomalyAlertFactory(facility=facility)
-    PlanningCycleFactory()
-    ModelRegistryFactory(facility=facility)
+    create_fuel_type()
+    facility = create_facility()
+    create_depot(fuel_type=facility.fuel_type)
+    create_vehicle()
+    create_inventory_log(facility=facility)
+    create_delivery()
+    create_forecast(facility=facility)
+    create_anomaly_alert(facility=facility)
+    create_planning_cycle()
+    create_model_registry(facility=facility)
 
 
 @pytest.mark.django_db
 def test_reorder_status_property() -> None:
     """Reorder status should move across OK, WARNING, and CRITICAL thresholds."""
-    facility = FacilityFactory(current_inventory=500, dynamic_reorder_point=300, min_safe_inventory=200)
+    facility = create_facility(current_inventory=500, dynamic_reorder_point=300, min_safe_inventory=200)
     _check(facility.reorder_status == "OK")
 
     facility.current_inventory = 250
@@ -61,7 +61,7 @@ def test_reorder_status_property() -> None:
 @pytest.mark.django_db
 def test_effective_reorder_point_falls_back_for_null_or_non_positive_dynamic() -> None:
     """Effective reorder point should fallback to min-safe until a positive dynamic value exists."""
-    facility = FacilityFactory(current_inventory=250, dynamic_reorder_point=None, min_safe_inventory=200)
+    facility = create_facility(current_inventory=250, dynamic_reorder_point=None, min_safe_inventory=200)
     _check(facility.effective_reorder_point == MIN_SAFE_POINT)
     _check(facility.reorder_status == "OK")
 
@@ -79,7 +79,7 @@ def test_effective_reorder_point_falls_back_for_null_or_non_positive_dynamic() -
 @pytest.mark.django_db
 def test_inventory_log_unique_constraint() -> None:
     """Inventory log uniqueness should enforce one row per facility timestamp."""
-    facility = FacilityFactory()
+    facility = create_facility()
     ts = timezone.now().replace(microsecond=0)
     InventoryLog.objects.create(
         facility=facility,
@@ -115,9 +115,9 @@ def test_facility_indexes_declared() -> None:
 @pytest.mark.django_db
 def test_model_string_representations_cover_expected_formats() -> None:
     """String representations should match the canonical user-facing formats."""
-    assignment = DepotFacilityAssignmentFactory()
-    forecast = ForecastFactory(facility=assignment.facility, model_version="v-test")
-    alert = AnomalyAlertFactory(facility=assignment.facility)
+    assignment = create_depot_facility_assignment()
+    forecast = create_forecast(facility=assignment.facility, model_version="v-test")
+    alert = create_anomaly_alert(facility=assignment.facility)
 
     _check(str(assignment) == f"{assignment.depot} -> {assignment.facility}")
     _check(str(forecast) == f"Forecast {forecast.facility_id} vv-test")

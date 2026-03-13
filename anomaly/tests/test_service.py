@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from typing import cast
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -22,8 +24,9 @@ def _check(condition: object, message: str | None = None) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lifespan_loads_detector_when_paths_set(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_lifespan_loads_detector_when_paths_set() -> None:
     """Lifespan should load detector artifacts when env paths are configured."""
+
     class _Detector:
         def __init__(self) -> None:
             self.is_loaded = False
@@ -40,27 +43,36 @@ async def test_lifespan_loads_detector_when_paths_set(monkeypatch: pytest.Monkey
         _check(name == "anomaly.detector")
         return _Module()
 
-    monkeypatch.setenv("ANOMALY_IFOREST_PATH", IFOREST_MODEL_PATH)
-    monkeypatch.setenv("ANOMALY_CLASSIFIER_PATH", CLASSIFIER_MODEL_PATH)
-    monkeypatch.setattr("anomaly.service.importlib.import_module", _import_module)
-
-    async with service.lifespan(service.app):
-        _check(service.detector is not None)
-        det = service.detector
-        _check(bool(getattr(det, "is_loaded", False)) is True)
-        _check(getattr(det, "loaded_paths", None) == (IFOREST_MODEL_PATH, CLASSIFIER_MODEL_PATH))
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "ANOMALY_IFOREST_PATH": IFOREST_MODEL_PATH,
+                "ANOMALY_CLASSIFIER_PATH": CLASSIFIER_MODEL_PATH,
+            },
+            clear=False,
+        ),
+        patch("anomaly.service.importlib.import_module", side_effect=_import_module),
+    ):
+        async with service.lifespan(service.app):
+            det = service.RUNTIME_STATE.detector
+            _check(isinstance(det, _Detector))
+            typed_det = cast("_Detector", det)
+            _check(typed_det.is_loaded is True)
+            _check(typed_det.loaded_paths == (IFOREST_MODEL_PATH, CLASSIFIER_MODEL_PATH))
 
 
 @pytest.mark.asyncio
 async def test_health_returns_ok_when_detector_loaded() -> None:
     """Health endpoint should report backend loaded when detector exists."""
+
     class _LoadedDetector:
         is_loaded = True
 
-    service.detector = _LoadedDetector()
-    transport = ASGITransport(app=service.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/health")
+    with patch.object(service.RUNTIME_STATE, "detector", _LoadedDetector()):
+        transport = ASGITransport(app=service.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/health")
 
     _check(response.status_code == STATUS_OK)
     body = response.json()
@@ -71,7 +83,6 @@ async def test_health_returns_ok_when_detector_loaded() -> None:
 @pytest.mark.asyncio
 async def test_detect_returns_503_without_detector() -> None:
     """Detect endpoint should return 503 when detector is unavailable."""
-    service.detector = None
     payload: dict[str, object] = {
         "facility_id": 1,
         "actual_consumption": 120.0,
@@ -86,20 +97,26 @@ async def test_detect_returns_503_without_detector() -> None:
             "inventory_level_pct": 0.5,
         },
     }
-    transport = ASGITransport(app=service.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/detect", json=payload)
+    with patch.object(service.RUNTIME_STATE, "detector", None):
+        transport = ASGITransport(app=service.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/detect", json=payload)
     _check(response.status_code == STATUS_UNAVAILABLE)
 
 
 @pytest.mark.asyncio
 async def test_detect_returns_200_with_mock_detector() -> None:
     """Detect endpoint should return model payload when detector is present."""
+
     class MockDetector:
         is_loaded = True
 
         def detect(
-            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float],
+            self,
+            actual: float,
+            predicted: float,
+            rolling_std: float,
+            features: dict[str, float],
         ) -> dict[str, object]:
             _ = actual, predicted, rolling_std, features
             return {
@@ -111,7 +128,6 @@ async def test_detect_returns_200_with_mock_detector() -> None:
                 "stage": 2,
             }
 
-    service.detector = MockDetector()
     payload: dict[str, object] = {
         "facility_id": 1,
         "actual_consumption": 120.0,
@@ -126,9 +142,10 @@ async def test_detect_returns_200_with_mock_detector() -> None:
             "inventory_level_pct": 0.5,
         },
     }
-    transport = ASGITransport(app=service.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/detect", json=payload)
+    with patch.object(service.RUNTIME_STATE, "detector", MockDetector()):
+        transport = ASGITransport(app=service.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/detect", json=payload)
     _check(response.status_code == STATUS_OK)
     _check(response.json()["anomaly_type"] == "LEAK")
 
@@ -136,11 +153,16 @@ async def test_detect_returns_200_with_mock_detector() -> None:
 @pytest.mark.asyncio
 async def test_detect_returns_non_anomaly_response() -> None:
     """Non-anomaly predictions should be returned unchanged by the endpoint."""
+
     class MockDetector:
         is_loaded = True
 
         def detect(
-            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float],
+            self,
+            actual: float,
+            predicted: float,
+            rolling_std: float,
+            features: dict[str, float],
         ) -> dict[str, object]:
             _ = actual, predicted, rolling_std, features
             return {
@@ -152,7 +174,6 @@ async def test_detect_returns_non_anomaly_response() -> None:
                 "stage": 1,
             }
 
-    service.detector = MockDetector()
     payload: dict[str, object] = {
         "facility_id": 1,
         "actual_consumption": 100.5,
@@ -167,9 +188,10 @@ async def test_detect_returns_non_anomaly_response() -> None:
             "inventory_level_pct": 0.7,
         },
     }
-    transport = ASGITransport(app=service.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/detect", json=payload)
+    with patch.object(service.RUNTIME_STATE, "detector", MockDetector()):
+        transport = ASGITransport(app=service.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/detect", json=payload)
     _check(response.status_code == STATUS_OK)
     _check(response.json()["is_anomaly"] is False)
     _check(response.json()["anomaly_type"] is None)
@@ -199,11 +221,16 @@ async def test_health_and_metrics_endpoints() -> None:
 @pytest.mark.asyncio
 async def test_detect_increments_detection_counter() -> None:
     """A detect call should increase anomaly detection metric counters."""
+
     class MockDetector:
         is_loaded = True
 
         def detect(
-            self, actual: float, predicted: float, rolling_std: float, features: dict[str, float],
+            self,
+            actual: float,
+            predicted: float,
+            rolling_std: float,
+            features: dict[str, float],
         ) -> dict[str, object]:
             _ = actual, predicted, rolling_std, features
             return {
@@ -215,7 +242,6 @@ async def test_detect_increments_detection_counter() -> None:
                 "stage": 2,
             }
 
-    service.detector = MockDetector()
     payload: dict[str, object] = {
         "facility_id": 1,
         "actual_consumption": 120.0,
@@ -231,10 +257,11 @@ async def test_detect_increments_detection_counter() -> None:
         },
     }
 
-    transport = ASGITransport(app=service.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        await client.post("/detect", json=payload)
-        metrics = await client.get("/metrics")
+    with patch.object(service.RUNTIME_STATE, "detector", MockDetector()):
+        transport = ASGITransport(app=service.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post("/detect", json=payload)
+            metrics = await client.get("/metrics")
 
     body = metrics.text
     _check(re.search(r'anomaly_detections_total\{anomaly_type="LEAK"\}\s+[0-9.]+', body) is not None)

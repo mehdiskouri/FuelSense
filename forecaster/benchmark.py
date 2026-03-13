@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from time import perf_counter
 from typing import Protocol, cast
@@ -86,7 +87,14 @@ def main() -> None:
         payload["peak_gpu_mem_gb"] = round(float(torch.cuda.max_memory_allocated() / (1024**3)), 4)
 
     if args.output == "json":
+        print(json.dumps(payload))  # noqa: T201
         return
+
+    print("backend,facilities,predict_ms,train_epoch_ms,val_rmse")  # noqa: T201
+    print(  # noqa: T201
+        f"{payload['backend']},{payload['facilities']},{payload['predict_ms']},{payload['train_epoch_ms']},"
+        f"{payload['val_rmse']}",
+    )
 
 
 if __name__ == "__main__":

@@ -18,4 +18,7 @@ def test_anomaly_injector_emits_event_with_high_probability() -> None:
     injector = AnomalyInjector(trigger_probability=1.0)
     _, event = injector.apply("f1", day=0, consumption=100, base_load=100, rng=rng)
     _check(event is not None, "High trigger probability should emit an anomaly event")
+    if event is None:
+        msg = "Expected anomaly event"
+        raise AssertionError(msg)
     _check(event.anomaly_type in injector.anomaly_types, "Event type should be from configured anomaly types")

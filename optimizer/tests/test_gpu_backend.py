@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from types import SimpleNamespace
 from typing import cast
 
@@ -138,7 +137,8 @@ def test_infeasible_without_vehicles() -> None:
 def test_health_check_fallback_without_nvml(monkeypatch: pytest.MonkeyPatch) -> None:
     """Health check should still return payload when NVML is unavailable."""
     backend = CUDARouteOptimizer()
-    monkeypatch.setitem(sys.modules, "pynvml", None)
+    monkeypatch.setattr("optimizer.backends.gpu_backend.pynvml", None)
+
     def _device_name(_dev: int) -> str:
         return "Mock GPU"
 
@@ -151,6 +151,7 @@ def test_health_check_fallback_without_nvml(monkeypatch: pytest.MonkeyPatch) -> 
 def test_health_check_with_nvml(monkeypatch: pytest.MonkeyPatch) -> None:
     """Health check should include GPU utilization when NVML is available."""
     backend = CUDARouteOptimizer()
+
     def _device_handle(_idx: int) -> object:
         return object()
 
@@ -167,7 +168,7 @@ def test_health_check_with_nvml(monkeypatch: pytest.MonkeyPatch) -> None:
         nvmlDeviceGetUtilizationRates=_utilization,
         nvmlShutdown=lambda: None,
     )
-    monkeypatch.setitem(sys.modules, "pynvml", fake_nvml)
+    monkeypatch.setattr("optimizer.backends.gpu_backend.pynvml", fake_nvml)
     payload = backend.health_check()
     _check(payload["gpu_utilization"] == EXPECTED_GPU_UTILIZATION)
 
@@ -175,6 +176,7 @@ def test_health_check_with_nvml(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_warmup_executes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Warmup should execute without errors when synchronize is available."""
     backend = CUDARouteOptimizer()
+
     def _sync(_device: object) -> None:
         return None
 

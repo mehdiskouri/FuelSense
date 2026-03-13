@@ -16,6 +16,7 @@ def _check(condition: object, message: str) -> None:
 @pytest.mark.django_db
 def test_healthz_returns_503_when_cache_roundtrip_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """Health endpoint should report 503 with detail when cache check fails."""
+
     def _cache_get(_key: str) -> str:
         return "not-ok"
 

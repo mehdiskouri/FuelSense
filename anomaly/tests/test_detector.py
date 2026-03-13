@@ -4,16 +4,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import cast
+from unittest.mock import patch
 
-import joblib
 import numpy as np
+import pytest
 
 from anomaly.detector import AnomalyDetector, AnomalyType
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 PAIR_COUNT = 2
 STAGE_TWO = 2
@@ -130,17 +127,29 @@ def test_stage2_maps_all_supported_types() -> None:
     _check(actual == expected)
 
 
-def test_load_and_is_loaded(tmp_path: Path) -> None:
+def test_load_and_is_loaded() -> None:
     """Model load should flip detector loaded state to true."""
+
+    class _JoblibModule:
+        @staticmethod
+        def load(path: object) -> object:
+            path_str = str(path)
+            if path_str.endswith("forest.joblib"):
+                return _ForestAnomaly()
+            if path_str.endswith("classifier.joblib"):
+                return _Classifier(label=1)
+            msg = f"unexpected artifact path: {path_str}"
+            raise AssertionError(msg)
+
+    def _import_module(name: str) -> object:
+        _check(name == "joblib")
+        return _JoblibModule()
+
     detector = AnomalyDetector()
     _check(detector.is_loaded is False)
 
-    forest_path = tmp_path / "forest.joblib"
-    classifier_path = tmp_path / "classifier.joblib"
-    joblib.dump(_ForestAnomaly(), forest_path)
-    joblib.dump(_Classifier(label=1), classifier_path)
-
-    detector.load(forest_path, classifier_path)
+    with patch("anomaly.detector.importlib.import_module", side_effect=_import_module):
+        detector.load("forest.joblib", "classifier.joblib")
     _check(detector.is_loaded is True)
 
 
@@ -169,3 +178,61 @@ def test_stage2_without_models_returns_unknown() -> None:
     _check(result["stage"] == STAGE_TWO)
     _check(result["is_anomaly"] is False)
     _check(result["anomaly_type"] == AnomalyType.UNKNOWN.value)
+
+
+def test_load_artifact_requires_callable_joblib_loader() -> None:
+    """Artifact loading should fail fast when imported joblib lacks callable load."""
+
+    class _BrokenJoblibModule:
+        load = "not-callable"
+
+    detector = AnomalyDetector()
+    with (
+        patch("anomaly.detector.importlib.import_module", return_value=_BrokenJoblibModule()),
+        pytest.raises(TypeError, match=r"joblib\.load is unavailable"),
+    ):
+        detector.load("forest.joblib", "classifier.joblib")
+
+
+def test_stage2_type_guards_reject_invalid_loaded_models() -> None:
+    """Model adapters should enforce the required forest/classifier interfaces."""
+
+    class _BadForestJoblib:
+        @staticmethod
+        def load(path: object) -> object:
+            _ = path
+            return object()
+
+    class _BadClassifierJoblib:
+        @staticmethod
+        def load(path: object) -> object:
+            if str(path).endswith("forest.joblib"):
+                return _ForestAnomaly()
+            return object()
+
+    detector = AnomalyDetector()
+    with (
+        patch("anomaly.detector.importlib.import_module", return_value=_BadForestJoblib()),
+        pytest.raises(TypeError, match="forest artifact"),
+    ):
+        detector.load("forest.joblib", "classifier.joblib")
+
+    with (
+        patch("anomaly.detector.importlib.import_module", return_value=_BadClassifierJoblib()),
+        pytest.raises(TypeError, match="classifier artifact"),
+    ):
+        detector.load("forest.joblib", "classifier.joblib")
+
+
+def test_detect_feature_fallback_handles_non_numeric_values() -> None:
+    """Feature coercion should fallback to 0.0 when stage-two features are non-numeric."""
+    detector = AnomalyDetector()
+    detector.forest = _ForestAnomaly()
+    detector.classifier = _Classifier(label=0)
+
+    noisy_features = _features()
+    noisy_features["z_score_rolling_3d"] = cast("float", object())
+
+    result = detector.detect(actual=120.0, predicted=100.0, rolling_std=3.0, features=noisy_features)
+    _check(result["is_anomaly"] is True)
+    _check(result["anomaly_type"] == AnomalyType.LEAK.value)

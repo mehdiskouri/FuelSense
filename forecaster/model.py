@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 from torch import Tensor, nn
 
@@ -25,10 +27,11 @@ class CausalConv1d(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Apply the causal convolution and trim padded timesteps."""
-        out = self.conv(x)
+        out = x
+        out = self.conv(out)
         if self.padding > 0:
             out = out[:, :, : -self.padding]
-        return out
+        return cast("Tensor", out)
 
 
 class TCNBlock(nn.Module):
@@ -51,7 +54,8 @@ class TCNBlock(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Run the residual TCN block for one feature map tensor."""
-        residual = self.residual(x)
+        residual = x
+        residual = self.residual(residual)
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
@@ -62,7 +66,7 @@ class TCNBlock(nn.Module):
         out = self.relu(out)
         out = self.dropout(out)
 
-        return self.relu(out + residual)
+        return cast("Tensor", self.relu(out + residual))
 
 
 class DemandTCN(nn.Module):
@@ -94,8 +98,9 @@ class DemandTCN(nn.Module):
         x = x.permute(0, 2, 1)
         x = self.backbone(x)
         last_timestep = x[:, :, -1]
-        out = self.head(last_timestep)
-        return out.view(-1, self.HORIZON, self.N_QUANTILES)
+        out = last_timestep
+        out = self.head(out)
+        return cast("Tensor", out.view(-1, self.HORIZON, self.N_QUANTILES))
 
 
 class QuantileLoss(nn.Module):

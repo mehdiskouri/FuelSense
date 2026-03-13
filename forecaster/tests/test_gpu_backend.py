@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from types import ModuleType
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -80,10 +81,12 @@ def test_gpu_backend_train_accepts_horizon_targets() -> None:
     _check(result["epochs_trained"] >= 1)
 
 
-def test_gpu_backend_init_raises_without_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gpu_backend_init_raises_without_cuda() -> None:
     """CUDA backend init should fail when CUDA availability is forced false."""
-    monkeypatch.setattr("forecaster.backends.gpu_backend.torch.cuda.is_available", lambda: False)
-    with pytest.raises(RuntimeError):
+    with (
+        patch("forecaster.backends.gpu_backend.torch.cuda.is_available", return_value=False),
+        pytest.raises(RuntimeError),
+    ):
         CUDAForecaster()
 
 
@@ -98,7 +101,7 @@ def test_gpu_backend_predict_raises_if_model_none() -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_gpu_backend_load_model_compile_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_gpu_backend_load_model_compile_fallback(tmp_path: Path) -> None:
     """Model load should continue when optional `torch.compile` raises."""
     backend = CUDAForecaster()
     model = backend.model
@@ -113,15 +116,14 @@ def test_gpu_backend_load_model_compile_fallback(monkeypatch: pytest.MonkeyPatch
         msg = "compile fail"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr("forecaster.backends.gpu_backend.torch.compile", _compile_fail)
-    backend.load_model(state_path)
+    with patch("forecaster.backends.gpu_backend.torch.compile", side_effect=_compile_fail):
+        backend.load_model(state_path)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_gpu_backend_health_check_nvml_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gpu_backend_health_check_nvml_failure() -> None:
     """Health check should fall back gracefully when NVML bindings are incomplete."""
     backend = CUDAForecaster()
-    monkeypatch.setitem(sys.modules, "pynvml", ModuleType("pynvml"))
-    # Missing required NVML attrs should drive fallback branch.
-    health = backend.health_check()
+    with patch.dict(sys.modules, {"pynvml": ModuleType("pynvml")}, clear=False):
+        health = backend.health_check()
     _check("gpu_utilization" in health)

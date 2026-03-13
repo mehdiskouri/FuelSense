@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import numpy as np
 
@@ -58,11 +59,9 @@ def test_forecaster_benchmark_cpu_50_facilities_runs() -> None:
     _check(float(values[4]) >= 0.0)
 
 
-def test_benchmark_main_json_output_with_mock_backend(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_benchmark_main_json_output_with_mock_backend(capsys: pytest.CaptureFixture[str]) -> None:
     """JSON benchmark output should include backend, facility count, and RMSE."""
+
     class _Backend:
         def warmup(self) -> None:
             return None
@@ -78,13 +77,11 @@ def test_benchmark_main_json_output_with_mock_backend(
         _ = (name, device)
         return _Backend()
 
-    monkeypatch.setattr("forecaster.benchmark.get_backend", _mock_get_backend)
-    monkeypatch.setattr(
-        "sys.argv",
-        ["benchmark", "--facilities", "10", "--device", "cpu", "--output", "json"],
-    )
-
-    benchmark.main()
+    with (
+        patch("forecaster.benchmark.get_backend", side_effect=_mock_get_backend),
+        patch.object(sys, "argv", ["benchmark", "--facilities", "10", "--device", "cpu", "--output", "json"]),
+    ):
+        benchmark.main()
     payload = json.loads(capsys.readouterr().out.strip())
     _check(payload["backend"] == "cpu")
     _check(payload["facilities"] == FACILITY_COUNT_10)

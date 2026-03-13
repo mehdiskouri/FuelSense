@@ -12,10 +12,15 @@ def healthz(_request: HttpRequest) -> JsonResponse:
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
+    except DatabaseError as exc:  # pragma: no cover
+        return JsonResponse({"status": "error", "detail": str(exc)}, status=503)
+
+    try:
         cache.set("healthz", "ok", timeout=5)
         cache_ok = cache.get("healthz") == "ok"
-    except (DatabaseError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
-        return JsonResponse({"status": "error", "detail": str(exc)}, status=503)
+    except Exception:  # noqa: BLE001
+        cache_ok = False
+
     if not cache_ok:
         return JsonResponse({"status": "error", "detail": "Cache check failed"}, status=503)
     return JsonResponse({"status": "ok"})

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -35,10 +36,14 @@ from fuelsense.core.serializers import (
 )
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
     from rest_framework.request import Request
 
 
-class FacilityViewSet(viewsets.ModelViewSet):
+logger = logging.getLogger(__name__)
+
+
+class FacilityViewSet(viewsets.ModelViewSet[Facility]):
     """API endpoints for facility inventory, forecast, and alert data."""
 
     queryset = Facility.objects.select_related("fuel_type").all().order_by("id")
@@ -52,8 +57,9 @@ class FacilityViewSet(viewsets.ModelViewSet):
         return FacilityListSerializer
 
     @action(detail=True, methods=["get"], url_path="inventory")
-    def inventory(self, request: Request, _pk: str | None = None) -> Response:
+    def inventory(self, request: Request, pk: str | None = None) -> Response:
         """Return recent inventory logs for one facility."""
+        _ = pk
         facility = self.get_object()
         days = int(request.query_params.get("days", 90))
         cutoff = timezone.now() - timedelta(days=days)
@@ -61,8 +67,9 @@ class FacilityViewSet(viewsets.ModelViewSet):
         return Response(InventoryLogSerializer(logs, many=True).data)
 
     @action(detail=True, methods=["get"], url_path="forecasts")
-    def forecasts(self, _request: Request, _pk: str | None = None) -> Response:
+    def forecasts(self, _request: Request, pk: str | None = None) -> Response:
         """Return latest forecast for one facility."""
+        _ = pk
         facility = self.get_object()
         latest = facility.forecasts.order_by("-created_at").first()
         if not latest:
@@ -70,8 +77,9 @@ class FacilityViewSet(viewsets.ModelViewSet):
         return Response(ForecastSerializer(latest).data)
 
     @action(detail=True, methods=["get"], url_path="alerts")
-    def alerts(self, request: Request, _pk: str | None = None) -> Response:
+    def alerts(self, request: Request, pk: str | None = None) -> Response:
         """Return anomaly alerts for one facility with optional filters."""
+        _ = pk
         facility = self.get_object()
         qs = facility.alerts.all().order_by("-timestamp")
         anomaly_type = request.query_params.get("anomaly_type")
@@ -80,29 +88,33 @@ class FacilityViewSet(viewsets.ModelViewSet):
             qs = qs.filter(anomaly_type=anomaly_type)
         if ack is not None:
             qs = qs.filter(is_acknowledged=ack.lower() == "true")
-        page = self.paginate_queryset(qs)
+        paginator = PageNumberPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
         if page is not None:
             ser = AnomalyAlertSerializer(page, many=True)
-            return self.get_paginated_response(ser.data)
+            return paginator.get_paginated_response(ser.data)
         return Response(AnomalyAlertSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], url_path="acknowledge")
-    def acknowledge(self, request: Request, _pk: str | None = None) -> Response:
+    def acknowledge(self, request: Request, pk: str | None = None) -> Response:
         """Acknowledge an alert linked to the selected facility."""
+        _ = pk
         serializer = AnomalyAlertAcknowledgeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         facility = self.get_object()
         alert = facility.alerts.filter(id=serializer.validated_data["alert_id"]).first()
         if alert is None:
             return Response({"detail": "Alert not found for this facility."}, status=status.HTTP_404_NOT_FOUND)
+        if not request.user.is_authenticated or request.user.pk is None:
+            return Response({"detail": "Authentication required."}, status=status.HTTP_403_FORBIDDEN)
         alert.is_acknowledged = True
-        alert.acknowledged_by = request.user
+        alert.acknowledged_by_id = request.user.pk
         alert.notes = serializer.validated_data.get("notes", alert.notes)
         alert.save(update_fields=["is_acknowledged", "acknowledged_by", "notes"])
         return Response(AnomalyAlertSerializer(alert).data)
 
 
-class DeliveryViewSet(viewsets.ModelViewSet):
+class DeliveryViewSet(viewsets.ModelViewSet[Delivery]):
     """API endpoints for delivery retrieval and status transitions."""
 
     queryset = (
@@ -120,12 +132,14 @@ class DeliveryViewSet(viewsets.ModelViewSet):
         return DeliveryListSerializer
 
     @action(detail=True, methods=["post"], url_path="update-status")
-    def update_status(self, request: Request, _pk: str | None = None) -> Response:
+    def update_status(self, request: Request, pk: str | None = None) -> Response:
         """Update delivery status while enforcing transition rules."""
+        _ = pk
         delivery = self.get_object()
         serializer = DeliveryStatusUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        new_status = serializer.validated_data["status"]
+        new_status = Delivery.Status(serializer.validated_data["status"])
+        current_status = Delivery.Status(delivery.status)
 
         allowed = {
             Delivery.Status.PLANNED: {Delivery.Status.IN_TRANSIT, Delivery.Status.FAILED},
@@ -133,7 +147,7 @@ class DeliveryViewSet(viewsets.ModelViewSet):
             Delivery.Status.DELIVERED: set(),
             Delivery.Status.FAILED: set(),
         }
-        if new_status not in allowed[delivery.status]:
+        if new_status not in allowed[current_status]:
             return Response({"detail": "Invalid status transition."}, status=status.HTTP_400_BAD_REQUEST)
 
         delivery.status = new_status
@@ -189,13 +203,13 @@ class PlanningViewSet(viewsets.ViewSet):
     def history(self, _request: Request) -> Response:
         """Return paginated planning cycle history."""
         qs = PlanningCycle.objects.all().order_by("-triggered_at")
-        page = self.paginate_queryset(qs)
+        page = PlanningViewSet.paginate_queryset(self, qs)
         if page is not None:
             ser = PlanningCycleSerializer(page, many=True)
             return self.get_paginated_response(ser.data)
         return Response(PlanningCycleSerializer(qs, many=True).data)
 
-    def paginate_queryset(self, queryset: object) -> list[object] | None:
+    def paginate_queryset(self, queryset: QuerySet[PlanningCycle]) -> list[PlanningCycle] | None:
         """Paginate queryset with local fallback paginator."""
         paginator = getattr(self, "paginator", None)
         if paginator is None:
@@ -208,7 +222,7 @@ class PlanningViewSet(viewsets.ViewSet):
         return self.paginator.get_paginated_response(data)
 
 
-class ModelRegistryViewSet(viewsets.ModelViewSet):
+class ModelRegistryViewSet(viewsets.ModelViewSet[ModelRegistry]):
     """API endpoints for model registry operations."""
 
     queryset = ModelRegistry.objects.select_related("facility").all().order_by("-trained_at")
@@ -217,8 +231,9 @@ class ModelRegistryViewSet(viewsets.ModelViewSet):
     filterset_fields = ("model_type", "is_active", "facility")
 
     @action(detail=True, methods=["post"], url_path="promote")
-    def promote(self, _request: Request, _pk: str | None = None) -> Response:
+    def promote(self, _request: Request, pk: str | None = None) -> Response:
         """Promote selected model and deactivate its siblings."""
+        _ = pk
         model = self.get_object()
         siblings = ModelRegistry.objects.filter(model_type=model.model_type, facility=model.facility).exclude(
             id=model.id,
@@ -229,10 +244,21 @@ class ModelRegistryViewSet(viewsets.ModelViewSet):
         return Response(ModelRegistrySerializer(model).data)
 
     @action(detail=True, methods=["post"], url_path="retrain")
-    def retrain(self, _request: Request, _pk: str | None = None) -> Response:
+    def retrain(self, _request: Request, pk: str | None = None) -> Response:
         """Enqueue retraining for the selected model scope."""
+        _ = pk
         model = self.get_object()
-        current_app.send_task("fuelsense.core.tasks.retrain_model", args=[model.facility_id, model.model_type])
+        try:
+            current_app.send_task(
+                "fuelsense.core.tasks.retrain_model",
+                args=[model.facility_id, model.model_type],
+                ignore_result=True,
+            )
+        except Exception:
+            logger.exception(
+                "failed to enqueue retrain task",
+                extra={"facility_id": model.facility_id, "model_type": model.model_type},
+            )
         return Response({"status": "queued"}, status=status.HTTP_202_ACCEPTED)
 
 

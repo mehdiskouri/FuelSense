@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false
 from typing import Protocol, cast
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
@@ -11,12 +12,12 @@ from django.test import Client
 
 from fuelsense.core.models import Delivery, ModelRegistry, PlanningCycle
 from fuelsense.core.tests.factories import (
-    AnomalyAlertFactory,
-    DeliveryFactory,
-    FacilityFactory,
-    ForecastFactory,
-    ModelRegistryFactory,
-    PlanningCycleFactory,
+    create_anomaly_alert,
+    create_delivery,
+    create_facility,
+    create_forecast,
+    create_model_registry,
+    create_planning_cycle,
 )
 
 HTTP_OK = 200
@@ -64,7 +65,7 @@ def _check(condition: object, message: str | None = None) -> None:
 @pytest.mark.django_db
 def test_facility_list_and_detail(api_client: object) -> None:
     """Facility list/detail endpoints should return created facility records."""
-    facility = FacilityFactory()
+    facility = create_facility()
     res = _get(api_client, "/api/v1/facilities/")
     _check(res.status_code == HTTP_OK)
     _check(len(cast("list[object]", _data_dict(res)["results"])) >= 1)
@@ -77,9 +78,9 @@ def test_facility_list_and_detail(api_client: object) -> None:
 @pytest.mark.django_db
 def test_facility_inventory_forecasts_alerts_and_ack(api_client: object) -> None:
     """Facility inventory, forecasts, alerts, and acknowledge actions should succeed."""
-    facility = FacilityFactory()
-    ForecastFactory(facility=facility)
-    alert = AnomalyAlertFactory(facility=facility)
+    facility = create_facility()
+    create_forecast(facility=facility)
+    alert = create_anomaly_alert(facility=facility)
 
     inv = _get(api_client, f"/api/v1/facilities/{facility.id}/inventory/?days=90")
     _check(inv.status_code == HTTP_OK)
@@ -99,7 +100,7 @@ def test_facility_inventory_forecasts_alerts_and_ack(api_client: object) -> None
 @pytest.mark.django_db
 def test_facility_forecasts_404_and_acknowledge_not_found(api_client: object) -> None:
     """Forecast and acknowledge endpoints should return 404 for missing records."""
-    facility = FacilityFactory()
+    facility = create_facility()
     fc = _get(api_client, f"/api/v1/facilities/{facility.id}/forecasts/")
     _check(fc.status_code == HTTP_NOT_FOUND)
 
@@ -110,9 +111,9 @@ def test_facility_forecasts_404_and_acknowledge_not_found(api_client: object) ->
 @pytest.mark.django_db
 def test_facility_alert_filters(api_client: object) -> None:
     """Alert filters should return only matching anomaly-type/ack-state records."""
-    facility = FacilityFactory()
-    AnomalyAlertFactory(facility=facility, anomaly_type="LEAK", is_acknowledged=True)
-    AnomalyAlertFactory(facility=facility, anomaly_type="THEFT", is_acknowledged=False)
+    facility = create_facility()
+    create_anomaly_alert(facility=facility, anomaly_type="LEAK", is_acknowledged=True)
+    create_anomaly_alert(facility=facility, anomaly_type="THEFT", is_acknowledged=False)
 
     res = _get(api_client, f"/api/v1/facilities/{facility.id}/alerts/?anomaly_type=LEAK&is_acknowledged=true")
     _check(res.status_code == HTTP_OK)
@@ -122,7 +123,7 @@ def test_facility_alert_filters(api_client: object) -> None:
 @pytest.mark.django_db
 def test_delivery_endpoints_and_transition(api_client: object) -> None:
     """Delivery list/detail and valid status transition endpoints should succeed."""
-    delivery = DeliveryFactory(status=Delivery.Status.PLANNED)
+    delivery = create_delivery(status=Delivery.Status.PLANNED)
     lst = _get(api_client, "/api/v1/deliveries/")
     _check(lst.status_code == HTTP_OK)
 
@@ -140,7 +141,7 @@ def test_delivery_endpoints_and_transition(api_client: object) -> None:
 @pytest.mark.django_db
 def test_delivery_invalid_transition_returns_400(api_client: object) -> None:
     """Invalid delivery status transitions should return HTTP 400."""
-    delivery = DeliveryFactory(status=Delivery.Status.DELIVERED)
+    delivery = create_delivery(status=Delivery.Status.DELIVERED)
     update = _post(
         api_client,
         f"/api/v1/deliveries/{delivery.id}/update-status/",
@@ -150,10 +151,10 @@ def test_delivery_invalid_transition_returns_400(api_client: object) -> None:
 
 
 @pytest.mark.django_db
-def test_planning_model_dashboard_endpoints(api_client: object, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_planning_model_dashboard_endpoints(api_client: object) -> None:
     """Planning trigger/history/model/dashboard endpoints should return expected statuses."""
-    ModelRegistryFactory()
-    PlanningCycleFactory()
+    create_model_registry()
+    create_planning_cycle()
 
     called: dict[str, list[str]] = {"tasks": []}
 
@@ -161,9 +162,8 @@ def test_planning_model_dashboard_endpoints(api_client: object, monkeypatch: pyt
         _ = args
         called["tasks"].append(f"{name}:{kwargs}")
 
-    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
-
-    trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "MANUAL"})
+    with patch("fuelsense.core.views.current_app.send_task", side_effect=fake_send_task):
+        trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "MANUAL"})
     _check(trig.status_code == HTTP_ACCEPTED)
     _check(_data_dict(trig)["status"] == "QUEUED")
     _check(called["tasks"])
@@ -178,7 +178,7 @@ def test_planning_model_dashboard_endpoints(api_client: object, monkeypatch: pyt
     if model is None:
         msg = "Expected model registry entry"
         raise AssertionError(msg)
-    model_pk = cast("int", model.pk)
+    model_pk = model.pk
     promote = _post(api_client, f"/api/v1/models/{model_pk}/promote/", {})
     _check(promote.status_code == HTTP_OK)
 
@@ -196,7 +196,7 @@ def test_planning_model_dashboard_endpoints(api_client: object, monkeypatch: pyt
 
 
 @pytest.mark.django_db
-def test_planning_trigger_emergency_dispatch(api_client: object, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_planning_trigger_emergency_dispatch(api_client: object) -> None:
     """Emergency trigger should enqueue emergency planning task."""
     called: dict[str, list[str]] = {"tasks": []}
 
@@ -204,20 +204,19 @@ def test_planning_trigger_emergency_dispatch(api_client: object, monkeypatch: py
         _ = args
         called["tasks"].append(f"{name}:{kwargs}")
 
-    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
-
-    trig = _post(
-        api_client,
-        "/api/v1/planning/trigger/",
-        {"trigger_type": "EMERGENCY", "facility_ids": [FACILITY_ID_ONE, FACILITY_ID_TWO]},
-    )
+    with patch("fuelsense.core.views.current_app.send_task", side_effect=fake_send_task):
+        trig = _post(
+            api_client,
+            "/api/v1/planning/trigger/",
+            {"trigger_type": "EMERGENCY", "facility_ids": [FACILITY_ID_ONE, FACILITY_ID_TWO]},
+        )
     _check(trig.status_code == HTTP_ACCEPTED)
     _check("fuelsense.core.tasks.run_emergency_planning_cycle" in called["tasks"][0])
 
 
 @pytest.mark.django_db
 def test_planning_trigger_emergency_rejects_empty_facility_ids(
-    api_client: object, monkeypatch: pytest.MonkeyPatch,
+    api_client: object,
 ) -> None:
     """Emergency trigger should reject empty facility id lists."""
     called: dict[str, list[str]] = {"tasks": []}
@@ -226,10 +225,10 @@ def test_planning_trigger_emergency_rejects_empty_facility_ids(
         _ = args
         called["tasks"].append(f"{name}:{kwargs}")
 
-    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
     before_count = PlanningCycle.objects.count()
 
-    trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "EMERGENCY", "facility_ids": []})
+    with patch("fuelsense.core.views.current_app.send_task", side_effect=fake_send_task):
+        trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "EMERGENCY", "facility_ids": []})
 
     _check(trig.status_code == HTTP_BAD_REQUEST)
     _check("facility_ids" in _data_dict(trig))
@@ -239,7 +238,7 @@ def test_planning_trigger_emergency_rejects_empty_facility_ids(
 
 @pytest.mark.django_db
 def test_planning_trigger_emergency_rejects_missing_facility_ids(
-    api_client: object, monkeypatch: pytest.MonkeyPatch,
+    api_client: object,
 ) -> None:
     """Emergency trigger should reject missing facility id field."""
     called: dict[str, list[str]] = {"tasks": []}
@@ -248,10 +247,10 @@ def test_planning_trigger_emergency_rejects_missing_facility_ids(
         _ = args
         called["tasks"].append(f"{name}:{kwargs}")
 
-    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
     before_count = PlanningCycle.objects.count()
 
-    trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "EMERGENCY"})
+    with patch("fuelsense.core.views.current_app.send_task", side_effect=fake_send_task):
+        trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "EMERGENCY"})
 
     _check(trig.status_code == HTTP_BAD_REQUEST)
     _check("facility_ids" in _data_dict(trig))
@@ -262,7 +261,6 @@ def test_planning_trigger_emergency_rejects_missing_facility_ids(
 @pytest.mark.django_db
 def test_planning_trigger_emergency_rejects_null_facility_ids(
     api_client: object,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Emergency trigger should reject null facility id payloads."""
     called: dict[str, list[str]] = {"tasks": []}
@@ -271,10 +269,10 @@ def test_planning_trigger_emergency_rejects_null_facility_ids(
         _ = args
         called["tasks"].append(f"{name}:{kwargs}")
 
-    monkeypatch.setattr("fuelsense.core.views.current_app.send_task", fake_send_task)
     before_count = PlanningCycle.objects.count()
 
-    trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "EMERGENCY", "facility_ids": None})
+    with patch("fuelsense.core.views.current_app.send_task", side_effect=fake_send_task):
+        trig = _post(api_client, "/api/v1/planning/trigger/", {"trigger_type": "EMERGENCY", "facility_ids": None})
 
     _check(trig.status_code == HTTP_BAD_REQUEST)
     _check("facility_ids" in _data_dict(trig))
@@ -285,16 +283,15 @@ def test_planning_trigger_emergency_rejects_null_facility_ids(
 @pytest.mark.django_db
 def test_planning_history_without_pagination_branch(
     api_client: object,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """History endpoint should return list branch when pagination is disabled."""
-    PlanningCycleFactory()
+    create_planning_cycle()
 
     def _no_pagination(self: object, queryset: object) -> None:
         _ = self, queryset
 
-    monkeypatch.setattr("fuelsense.core.views.PlanningViewSet.paginate_queryset", _no_pagination)
-    res = _get(api_client, "/api/v1/planning/history/")
+    with patch("fuelsense.core.views.PlanningViewSet.paginate_queryset", side_effect=_no_pagination):
+        res = _get(api_client, "/api/v1/planning/history/")
     _check(res.status_code == HTTP_OK)
     _check(isinstance(res.data, list))
 
@@ -310,8 +307,8 @@ def test_auth_required() -> None:
 @pytest.mark.django_db
 def test_dashboard_kpis_counts_below_reorder_with_fallback_threshold(api_client: object) -> None:
     """KPI endpoint should count facilities below fallback reorder threshold."""
-    FacilityFactory(current_inventory=180.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
-    FacilityFactory(current_inventory=260.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
+    create_facility(current_inventory=180.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
+    create_facility(current_inventory=260.0, min_safe_inventory=220.0, dynamic_reorder_point=None)
     cache.delete("cache:dashboard:kpis")
 
     response = _get(api_client, "/api/v1/dashboard/kpis/")

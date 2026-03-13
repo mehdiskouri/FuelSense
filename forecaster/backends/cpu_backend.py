@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Any, override
+from typing import Any, cast
 
 import numpy as np
 import torch
 from torch import Tensor
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from forecaster.model import DemandTCN, QuantileLoss
 from fuelsense_common.compute import ComputeBackend, DeviceType
@@ -52,7 +52,7 @@ class CPUForecaster(ComputeBackend):
         return {
             "device": self.device.value,
             "threads": torch.get_num_threads(),
-            "mkl_available": bool(torch.backends.mkl.is_available()),
+            "mkl_available": bool(cast("Any", torch.backends.mkl).is_available()),
             "model_loaded": bool(self.model is not None),
         }
 
@@ -73,7 +73,7 @@ class CPUForecaster(ComputeBackend):
             raise RuntimeError(msg)
         with torch.no_grad():
             preds = self.model(x)
-        return preds.detach().cpu().numpy()
+        return cast("np.ndarray", preds.detach().cpu().numpy())
 
     @staticmethod
     def _expand_targets(raw: Tensor) -> Tensor:
@@ -90,7 +90,7 @@ class CPUForecaster(ComputeBackend):
         train_y: Tensor,
         batch_size: int,
     ) -> DataLoader[tuple[Tensor, Tensor]]:
-        train_ds = TensorDataset(train_x, train_y)
+        train_ds = cast("Dataset[tuple[Tensor, Tensor]]", TensorDataset(train_x, train_y))
         return DataLoader(
             train_ds,
             batch_size=batch_size,
@@ -134,8 +134,7 @@ class CPUForecaster(ComputeBackend):
             target = self._expand_targets(y)
             return float(torch.sqrt(torch.mean((pred_p50 - target) ** 2)).item())
 
-    @override
-    def train(
+    def train(  # noqa: PLR0913
         self,
         train_data: np.ndarray,
         train_targets: np.ndarray,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pytest
 import torch
@@ -26,13 +28,15 @@ def test_cpu_gpu_predict_parity_with_shared_weights() -> None:
     """CPU and GPU predictions should match when weights and inputs are identical."""
     cpu_backend = CPUForecaster()
     _check(cpu_backend.model is not None, "CPU backend should initialize model")
+    cpu_model = cast("torch.nn.Module", cpu_backend.model)
 
     gpu_backend = CUDAForecaster()
     _check(gpu_backend.model is not None, "GPU backend should initialize model")
+    gpu_model = cast("torch.nn.Module", gpu_backend.model)
 
     # Align weights so inference parity is meaningful.
-    gpu_backend.model.load_state_dict(cpu_backend.model.state_dict())
-    gpu_backend.model.eval()
+    gpu_model.load_state_dict(cpu_model.state_dict())
+    gpu_model.eval()
 
     x = _synthetic_data(8)
     cpu_pred = cpu_backend.predict(x)

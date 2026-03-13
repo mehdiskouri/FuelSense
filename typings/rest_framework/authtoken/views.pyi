@@ -1,0 +1,3 @@
+from django.http import HttpRequest, HttpResponseBase
+
+def obtain_auth_token(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase: ...

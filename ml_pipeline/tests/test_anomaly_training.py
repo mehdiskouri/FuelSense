@@ -81,12 +81,23 @@ def test_train_and_register_logs_and_quality(monkeypatch: pytest.MonkeyPatch, tm
         ) -> None:
             _ = exc_type, exc, tb
 
-    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.start_run", lambda _run_name: _Run())
+    def _start_run(*, run_name: str | None = None) -> _Run:
+        _ = run_name
+        return _Run()
+
+    def _log_artifact(path: str, *, artifact_path: str | None = None) -> None:
+        _ = artifact_path
+        logged_artifacts.append(str(path))
+
+    monkeypatch.setattr(
+        "ml_pipeline.anomaly_training.mlflow.start_run",
+        _start_run,
+    )
     monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.log_params", logged_params.update)
     monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.log_metrics", logged_metrics.update)
     monkeypatch.setattr(
         "ml_pipeline.anomaly_training.mlflow.log_artifact",
-        lambda path, _artifact_path=None: logged_artifacts.append(str(path)),
+        _log_artifact,
     )
 
     result = trainer.train_and_register(artifact_dir=tmp_path)

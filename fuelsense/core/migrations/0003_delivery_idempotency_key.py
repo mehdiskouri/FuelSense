@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from django.db import migrations, models
 
@@ -10,11 +13,11 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     """Attach idempotency key to delivery records."""
 
-    dependencies: ClassVar[list[object]] = [
+    dependencies: ClassVar[Sequence[Any]] = [
         ("core", "0002_planningcycle_lifecycle_fields"),
     ]
 
-    operations: ClassVar[list[object]] = [
+    operations: ClassVar[Sequence[Any]] = [
         migrations.AddField(
             model_name="delivery",
             name="idempotency_key",

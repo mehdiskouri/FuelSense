@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict
 
 from rest_framework import serializers
 
@@ -23,7 +23,48 @@ if TYPE_CHECKING:
     from django.db.models import QuerySet
 
 
-class FuelTypeSerializer(serializers.ModelSerializer):
+class AnomalyAlertAcknowledgeData(TypedDict, total=False):
+    """Validated payload for acknowledging an anomaly alert."""
+
+    alert_id: int
+    notes: str
+
+
+class DeliveryStatusUpdateData(TypedDict, total=False):
+    """Validated payload for transitioning delivery status."""
+
+    status: str
+    notes: str
+
+
+class PlanningTriggerData(TypedDict, total=False):
+    """Validated payload for manual or emergency planning trigger."""
+
+    trigger_type: Literal["MANUAL", "EMERGENCY"]
+    facility_ids: list[int] | None
+
+
+class DashboardKPIData(TypedDict):
+    """Dashboard KPI response payload schema."""
+
+    avg_delivery_cost_last_30d: float
+    forecast_accuracy_rmse: float
+    anomaly_detection_rate: float
+    unacknowledged_anomalies_count: int
+    facilities_below_reorder: int
+    deliveries_in_transit: int
+
+
+class DriftHeatmapPoint(TypedDict):
+    """Per-model drift heatmap response payload schema."""
+
+    facility_id: int | None
+    facility_name: str | None
+    drift_ratio: float
+    model_version: int
+
+
+class FuelTypeSerializer(serializers.ModelSerializer[FuelType]):
     """Serializer for fuel type records."""
 
     class Meta:
@@ -33,7 +74,7 @@ class FuelTypeSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class VehicleSerializer(serializers.ModelSerializer):
+class VehicleSerializer(serializers.ModelSerializer[Vehicle]):
     """Serializer for vehicle records."""
 
     class Meta:
@@ -43,7 +84,7 @@ class VehicleSerializer(serializers.ModelSerializer):
         fields = ("id", "registration", "capacity", "cost_per_km", "is_available")
 
 
-class InventoryLogSerializer(serializers.ModelSerializer):
+class InventoryLogSerializer(serializers.ModelSerializer[InventoryLog]):
     """Serializer for inventory log snapshots."""
 
     class Meta:
@@ -61,7 +102,7 @@ class InventoryLogSerializer(serializers.ModelSerializer):
         )
 
 
-class ForecastSerializer(serializers.ModelSerializer):
+class ForecastSerializer(serializers.ModelSerializer[Forecast]):
     """Serializer for persisted forecasts."""
 
     class Meta:
@@ -71,7 +112,7 @@ class ForecastSerializer(serializers.ModelSerializer):
         fields = ("id", "model_version", "created_at", "horizon_days", "predictions_json", "rmse")
 
 
-class AnomalyAlertSerializer(serializers.ModelSerializer):
+class AnomalyAlertSerializer(serializers.ModelSerializer[AnomalyAlert]):
     """Serializer for anomaly alert records."""
 
     acknowledged_by = serializers.SerializerMethodField()
@@ -98,14 +139,14 @@ class AnomalyAlertSerializer(serializers.ModelSerializer):
         return obj.acknowledged_by.username if obj.acknowledged_by else None
 
 
-class AnomalyAlertAcknowledgeSerializer(serializers.Serializer):
+class AnomalyAlertAcknowledgeSerializer(serializers.Serializer[AnomalyAlertAcknowledgeData]):
     """Payload serializer for alert acknowledgement requests."""
 
     alert_id = serializers.IntegerField()
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
-class FacilityListSerializer(serializers.ModelSerializer):
+class FacilityListSerializer(serializers.ModelSerializer[Facility]):
     """Serializer for facility list responses."""
 
     fuel_type = FuelTypeSerializer(read_only=True)
@@ -115,7 +156,7 @@ class FacilityListSerializer(serializers.ModelSerializer):
         """DRF metadata for list-level Facility serialization."""
 
         model = Facility
-        fields = (
+        fields: ClassVar[tuple[str, ...]] = (
             "id",
             "name",
             "facility_type",
@@ -138,7 +179,7 @@ class FacilityDetailSerializer(FacilityListSerializer):
     class Meta(FacilityListSerializer.Meta):
         """DRF metadata for detail-level Facility serialization."""
 
-        fields = (
+        fields: ClassVar[tuple[str, ...]] = (
             *FacilityListSerializer.Meta.fields,
             *(
                 "storage_capacity",
@@ -151,18 +192,18 @@ class FacilityDetailSerializer(FacilityListSerializer):
             ),
         )
 
-    def get_latest_forecast(self, obj: Facility) -> dict | None:
+    def get_latest_forecast(self, obj: Facility) -> dict[str, object] | None:
         """Return the latest forecast payload when available."""
         latest = obj.forecasts.order_by("-created_at").first()
         return ForecastSerializer(latest).data if latest else None
 
-    def get_latest_inventory_log(self, obj: Facility) -> dict | None:
+    def get_latest_inventory_log(self, obj: Facility) -> dict[str, object] | None:
         """Return the latest inventory observation when available."""
         latest = obj.inventory_logs.order_by("-timestamp").first()
         return InventoryLogSerializer(latest).data if latest else None
 
 
-class DeliveryItemSerializer(serializers.ModelSerializer):
+class DeliveryItemSerializer(serializers.ModelSerializer[DeliveryItem]):
     """Serializer for delivery stop items."""
 
     facility = FacilityListSerializer(read_only=True)
@@ -174,7 +215,7 @@ class DeliveryItemSerializer(serializers.ModelSerializer):
         fields = ("id", "facility", "quantity", "planned_arrival", "actual_arrival", "sequence")
 
 
-class DeliveryListSerializer(serializers.ModelSerializer):
+class DeliveryListSerializer(serializers.ModelSerializer[Delivery]):
     """Serializer for delivery list responses."""
 
     vehicle = VehicleSerializer(read_only=True)
@@ -183,7 +224,15 @@ class DeliveryListSerializer(serializers.ModelSerializer):
         """DRF metadata for list-level Delivery serialization."""
 
         model = Delivery
-        fields = ("id", "depot", "vehicle", "planned_date", "status", "total_distance_km", "total_cost")
+        fields: ClassVar[tuple[str, ...]] = (
+            "id",
+            "depot",
+            "vehicle",
+            "planned_date",
+            "status",
+            "total_distance_km",
+            "total_cost",
+        )
 
 
 class DeliveryDetailSerializer(DeliveryListSerializer):
@@ -194,17 +243,22 @@ class DeliveryDetailSerializer(DeliveryListSerializer):
     class Meta(DeliveryListSerializer.Meta):
         """DRF metadata for detail-level Delivery serialization."""
 
-        fields = (*DeliveryListSerializer.Meta.fields, *("route_json", "solver_time_ms", "items"))
+        fields: ClassVar[tuple[str, ...]] = (
+            *DeliveryListSerializer.Meta.fields,
+            "route_json",
+            "solver_time_ms",
+            "items",
+        )
 
 
-class DeliveryStatusUpdateSerializer(serializers.Serializer):
+class DeliveryStatusUpdateSerializer(serializers.Serializer[DeliveryStatusUpdateData]):
     """Payload serializer for delivery status transition requests."""
 
     status = serializers.ChoiceField(choices=Delivery.Status.choices)
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
-class PlanningCycleSerializer(serializers.ModelSerializer):
+class PlanningCycleSerializer(serializers.ModelSerializer[PlanningCycle]):
     """Serializer for planning cycle history records."""
 
     class Meta:
@@ -214,13 +268,13 @@ class PlanningCycleSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class PlanningTriggerSerializer(serializers.Serializer):
+class PlanningTriggerSerializer(serializers.Serializer[PlanningTriggerData]):
     """Payload serializer for manual and emergency planning triggers."""
 
     trigger_type = serializers.ChoiceField(choices=["MANUAL", "EMERGENCY"])
     facility_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_null=True)
 
-    def validate(self, attrs: dict[str, object]) -> dict[str, object]:
+    def validate(self, attrs: PlanningTriggerData) -> PlanningTriggerData:
         """Enforce emergency trigger payload requirements."""
         trigger_type = attrs.get("trigger_type")
         facility_ids = attrs.get("facility_ids")
@@ -231,7 +285,7 @@ class PlanningTriggerSerializer(serializers.Serializer):
         return attrs
 
 
-class ModelRegistrySerializer(serializers.ModelSerializer):
+class ModelRegistrySerializer(serializers.ModelSerializer[ModelRegistry]):
     """Serializer for model registry entries."""
 
     class Meta:
@@ -241,7 +295,7 @@ class ModelRegistrySerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class DashboardKPISerializer(serializers.Serializer):
+class DashboardKPISerializer(serializers.Serializer[DashboardKPIData]):
     """Serializer for dashboard KPI payloads."""
 
     avg_delivery_cost_last_30d = serializers.FloatField()
@@ -252,7 +306,7 @@ class DashboardKPISerializer(serializers.Serializer):
     deliveries_in_transit = serializers.IntegerField()
 
 
-class DriftHeatmapSerializer(serializers.Serializer):
+class DriftHeatmapSerializer(serializers.Serializer[DriftHeatmapPoint]):
     """Serializer for drift heatmap response payloads."""
 
     facility_id = serializers.IntegerField(allow_null=True)

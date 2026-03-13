@@ -59,6 +59,7 @@ def test_benchmark_main_runs_with_mock_backend(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Benchmark main should print CSV line when using a mock backend."""
+
     class _Backend:
         def warmup(self) -> None:
             return None
@@ -91,6 +92,7 @@ def test_benchmark_main_json_output_with_mock_backend(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Benchmark main should emit parseable JSON in JSON output mode."""
+
     class _Backend:
         def warmup(self) -> None:
             return None

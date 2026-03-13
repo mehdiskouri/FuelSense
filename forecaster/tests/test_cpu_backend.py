@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -11,8 +12,6 @@ from forecaster.backends.cpu_backend import CPUForecaster
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 MIN_HISTORY_POINTS = 2
@@ -58,8 +57,9 @@ def test_cpu_backend_load_model_roundtrip(tmp_path: Path) -> None:
     backend = CPUForecaster()
     model = backend.model
     _check(model is not None)
+    typed_model = cast("torch.nn.Module", model)
     model_path = tmp_path / "cpu_model.pt"
-    torch.save(model.state_dict(), model_path)
+    torch.save(typed_model.state_dict(), model_path)
     backend.load_model(model_path)
     x, _ = _synthetic_data(4)
     out = backend.predict(x)
@@ -102,10 +102,16 @@ def test_cpu_backend_train_accepts_horizon_targets() -> None:
     _check(result["epochs_trained"] >= 1)
 
 
-def test_cpu_backend_respects_env_thread_and_worker_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cpu_backend_respects_env_thread_and_worker_policy() -> None:
     """Environment thread/worker settings should be applied at backend init time."""
-    monkeypatch.setenv("FUELSENSE_FORECAST_CPU_THREADS", "2")
-    monkeypatch.setenv("FUELSENSE_FORECAST_CPU_WORKERS", "3")
-    backend = CPUForecaster()
+    with patch.dict(
+        "os.environ",
+        {
+            "FUELSENSE_FORECAST_CPU_THREADS": "2",
+            "FUELSENSE_FORECAST_CPU_WORKERS": "3",
+        },
+        clear=False,
+    ):
+        backend = CPUForecaster()
     _check(torch.get_num_threads() == CPU_THREADS)
     _check(backend.train_num_workers == CPU_WORKERS)

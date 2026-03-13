@@ -81,7 +81,10 @@ class Depot(models.Model):
     longitude = models.FloatField()
     fuel_type = models.ForeignKey(FuelType, on_delete=models.PROTECT)
     fuel_inventory = models.FloatField()
-    facilities = models.ManyToManyField(Facility, through="DepotFacilityAssignment")
+    facilities: models.ManyToManyField[Facility, DepotFacilityAssignment] = models.ManyToManyField(
+        Facility,
+        through="DepotFacilityAssignment",
+    )
 
     def __str__(self) -> str:
         """Return depot name for display contexts."""

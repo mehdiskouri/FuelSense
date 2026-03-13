@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar, Protocol
 
-if TYPE_CHECKING:
-    import numpy as np
+
+class _RngLike(Protocol):
+    """Typed subset of RNG API used by anomaly sampling logic."""
+
+    def random(self) -> float: ...
+
+    def choice(self, values: list[str]) -> str: ...
+
+    def integers(self, low: int, high: int) -> int: ...
+
+    def uniform(self, low: float, high: float) -> float: ...
 
 
 @dataclass
@@ -38,7 +47,7 @@ class AnomalyInjector:
         self._active: dict[str, AnomalyEvent] = {}
         self._shift_multiplier: dict[str, float] = {}
 
-    def _sample_event(self, day: int, rng: np.random.Generator) -> AnomalyEvent:
+    def _sample_event(self, day: int, rng: _RngLike) -> AnomalyEvent:
         anomaly_type = str(rng.choice(self.anomaly_types))
         if anomaly_type == "LEAK":
             return AnomalyEvent(anomaly_type, day, int(rng.integers(3, 8)), float(rng.uniform(0.15, 0.30)))
@@ -55,10 +64,11 @@ class AnomalyInjector:
         facility_key: str,
         day: int,
         consumption: float,
-        _base_load: float,
-        rng: np.random.Generator,
+        base_load: float,
+        rng: _RngLike,
     ) -> tuple[float, AnomalyEvent | None]:
         """Apply anomaly process and return modified consumption plus optional label."""
+        _ = base_load
         if facility_key not in self._shift_multiplier:
             self._shift_multiplier[facility_key] = 1.0
 

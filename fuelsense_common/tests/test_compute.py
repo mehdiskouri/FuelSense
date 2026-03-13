@@ -37,6 +37,7 @@ def test_resolve_device_explicit_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_resolve_device_explicit_cuda_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """Explicit CUDA setting should resolve to CUDA when CUDA is available."""
+
     def _import_torch(_name: str) -> _TorchCudaAvailable:
         return _TorchCudaAvailable()
 
@@ -46,9 +47,11 @@ def test_resolve_device_explicit_cuda_available(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_resolve_device_explicit_cuda_fallback(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Explicit CUDA setting should fall back to CPU when CUDA is unavailable."""
+
     def _import_torch(_name: str) -> _TorchCudaUnavailable:
         return _TorchCudaUnavailable()
 
@@ -61,6 +64,7 @@ def test_resolve_device_explicit_cuda_fallback(
 
 def test_resolve_device_auto_cuda(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Auto mode should choose CUDA when import succeeds and CUDA is available."""
+
     def _import_torch(_name: str) -> _TorchCudaAvailable:
         return _TorchCudaAvailable()
 
@@ -85,6 +89,7 @@ def test_resolve_device_auto_cpu_on_importerror(monkeypatch: pytest.MonkeyPatch)
 
 def test_compute_backend_protocol_runtime_check() -> None:
     """Runtime protocol checks should accept valid backends and reject invalid ones."""
+
     class ValidBackend:
         device = DeviceType.CPU
 

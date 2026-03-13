@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from fuelsense_common.compute import ComputeBackend, DeviceType
 from optimizer import service
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ def _valid_optimize_payload() -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_optimize_returns_503_without_backend() -> None:
     """Optimize endpoint should report unavailable when backend is not loaded."""
-    service.backend = None
+    service.RUNTIME_STATE.backend = None
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/optimize", json=_valid_optimize_payload())
@@ -54,8 +55,9 @@ async def test_optimize_returns_503_without_backend() -> None:
 @pytest.mark.asyncio
 async def test_optimize_returns_200_with_mock_backend() -> None:
     """Optimize endpoint should return optimal response for a functioning backend."""
+
     class MockBackend:
-        device = service.DeviceType.CPU
+        device = DeviceType.CPU
 
         def warmup(self) -> None:
             return None
@@ -90,8 +92,8 @@ async def test_optimize_returns_200_with_mock_backend() -> None:
                 "cost_reduction_pct": 26.7,
             }
 
-    service.backend = MockBackend()
-    service.device_type = service.DeviceType.CPU
+    service.RUNTIME_STATE.backend = MockBackend()
+    service.RUNTIME_STATE.device_type = DeviceType.CPU
 
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -124,8 +126,9 @@ async def test_health_and_metrics_endpoints() -> None:
 @pytest.mark.asyncio
 async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lifespan startup should resolve and warm backend exactly once."""
-    class _Backend(service.ComputeBackend):
-        device = service.DeviceType.CPU
+
+    class _Backend:
+        device = DeviceType.CPU
         warmed = False
 
         def warmup(self) -> None:
@@ -148,8 +151,9 @@ async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
             }
 
     backend = _Backend()
-    monkeypatch.setattr("optimizer.service.resolve_device", lambda: service.DeviceType.CPU)
-    def _get_backend(_name: str, _device: service.DeviceType) -> _Backend:
+    monkeypatch.setattr("optimizer.service.resolve_device", lambda: DeviceType.CPU)
+
+    def _get_backend(_name: str, _device: DeviceType) -> _Backend:
         _ = _name, _device
         return backend
 
@@ -161,15 +165,15 @@ async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
             yield
 
     async with _run():
-        _check(service.backend is backend)
+        _check(service.RUNTIME_STATE.backend is backend)
         _check(backend.warmed is True)
 
 
 @pytest.mark.asyncio
 async def test_health_degraded_when_backend_none() -> None:
     """Health endpoint should report degraded when backend is unavailable."""
-    service.backend = None
-    service.device_type = service.DeviceType.CPU
+    service.RUNTIME_STATE.backend = None
+    service.RUNTIME_STATE.device_type = DeviceType.CPU
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         health = await client.get("/health")
@@ -180,7 +184,7 @@ async def test_health_degraded_when_backend_none() -> None:
 @pytest.mark.asyncio
 async def test_lifespan_runtimeerror_keeps_backend_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Backend load failures during lifespan should leave backend unset."""
-    monkeypatch.setattr("optimizer.service.resolve_device", lambda: service.DeviceType.CUDA)
+    monkeypatch.setattr("optimizer.service.resolve_device", lambda: DeviceType.CUDA)
 
     def _raise(name: str, device: object) -> object:
         _ = name, device
@@ -195,17 +199,18 @@ async def test_lifespan_runtimeerror_keeps_backend_unavailable(monkeypatch: pyte
             yield
 
     async with _run():
-        _check(service.backend is None)
+        _check(service.RUNTIME_STATE.backend is None)
 
 
 @pytest.mark.asyncio
 async def test_optimize_returns_503_when_backend_has_no_solve() -> None:
     """Backends lacking `solve` should produce service-unavailable optimize responses."""
+
     class NoSolveBackend:
         def health_check(self) -> dict[str, object]:
             return {"status": "ok"}
 
-    service.backend = NoSolveBackend()  # type: ignore[assignment]
+    service.RUNTIME_STATE.backend = cast("ComputeBackend", NoSolveBackend())
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/optimize", json=_valid_optimize_payload())

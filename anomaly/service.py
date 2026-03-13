@@ -6,7 +6,7 @@ import importlib
 import os
 from contextlib import asynccontextmanager
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import FastAPI, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -29,10 +29,22 @@ DETECTIONS_TOTAL = Counter(
 )
 
 
-class _RuntimeState:
-    """Mutable runtime state for anomaly detector lifecycle."""
+class _DetectorLike(Protocol):
+    is_loaded: bool
 
-    detector: Any | None = None
+    def load(self, forest_path: str, classifier_path: str) -> None: ...
+
+    def detect(
+        self,
+        actual: float,
+        predicted: float,
+        rolling_std: float,
+        features: dict[str, float],
+    ) -> dict[str, object]: ...
+
+
+class _RuntimeState:
+    detector: _DetectorLike | None = None
 
 
 RUNTIME_STATE = _RuntimeState()
@@ -48,16 +60,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         detector_cls = candidate
 
     if detector_cls is not None:
-        RUNTIME_STATE.detector = detector_cls()
+        created = detector_cls()
+        RUNTIME_STATE.detector = created if hasattr(created, "load") else None
         forest_path = os.environ.get("ANOMALY_IFOREST_PATH", "").strip()
         classifier_path = os.environ.get("ANOMALY_CLASSIFIER_PATH", "").strip()
-        if (
-            forest_path
-            and classifier_path
-            and RUNTIME_STATE.detector is not None
-            and hasattr(RUNTIME_STATE.detector, "load")
-        ):
-            cast("Any", RUNTIME_STATE.detector).load(forest_path, classifier_path)
+        if forest_path and classifier_path and RUNTIME_STATE.detector is not None:
+            RUNTIME_STATE.detector.load(forest_path, classifier_path)
     else:
         RUNTIME_STATE.detector = None
 
@@ -75,7 +83,7 @@ def detect(request: AnomalyDetectRequest) -> AnomalyDetectResponse:
         raise HTTPException(status_code=503, detail="Anomaly detector unavailable")
 
     start = perf_counter()
-    result = cast("Any", detector).detect(
+    result = detector.detect(
         actual=request.actual_consumption,
         predicted=request.predicted_consumption,
         rolling_std=request.rolling_std,

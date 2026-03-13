@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import os
 from time import perf_counter
-from typing import Any, override
+from typing import Any
 
 import torch
 
 from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import register_backend
 
+pynvml: Any | None
 try:
     import pynvml
 except ImportError:  # pragma: no cover
@@ -326,8 +327,7 @@ class CUDARouteOptimizer(ComputeBackend):
             "cost_reduction_pct": float(max(reduction, 0.0)),
         }
 
-    @override
-    def solve(
+    def solve(  # noqa: PLR0913
         self,
         depot_lat: float,
         depot_lng: float,

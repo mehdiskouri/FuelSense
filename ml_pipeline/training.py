@@ -10,7 +10,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import mlflow
 import mlflow.pytorch as mlflow_pytorch
@@ -121,7 +121,7 @@ class ForecastTrainer:
     def _train_backend_model(self, dataset: TrainingDataset, device: DeviceType) -> dict[str, Any]:
         backend = get_backend("demand_forecaster", device)
         backend_any: Any = backend
-        return backend_any.train(
+        result = backend_any.train(
             train_data=dataset.train_data,
             train_targets=dataset.train_targets,
             val_data=dataset.val_data,
@@ -132,6 +132,7 @@ class ForecastTrainer:
             weight_decay=self.config.weight_decay,
             patience=10,
         )
+        return cast("dict[str, Any]", result)
 
     def _evaluate_model(
         self,

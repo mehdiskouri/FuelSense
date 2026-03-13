@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
 
 from fuelsense.core.tests.factories import (
-    DeliveryFactory,
-    FacilityFactory,
-    ForecastFactory,
-    InventoryLogFactory,
-    ModelRegistryFactory,
+    create_delivery,
+    create_facility,
+    create_forecast,
+    create_inventory_log,
+    create_model_registry,
 )
 
 if TYPE_CHECKING:
@@ -46,9 +47,9 @@ def test_admin_list_pages_render(admin_client: Client) -> None:
 @pytest.mark.django_db
 def test_admin_custom_pages_render(admin_client: Client) -> None:
     """Custom facility/delivery change pages and dashboard should render."""
-    facility = FacilityFactory()
-    delivery = DeliveryFactory()
-    ModelRegistryFactory()
+    facility = create_facility()
+    delivery = create_delivery()
+    create_model_registry()
 
     facility_page = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
     _check(facility_page.status_code == HTTP_OK)
@@ -63,14 +64,13 @@ def test_admin_custom_pages_render(admin_client: Client) -> None:
 @pytest.mark.django_db
 def test_facility_chart_forecast_overlay_uses_future_horizon_timestamps(
     admin_client: Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Forecast overlay plot should use forecast-day offsets from forecast creation time."""
-    facility = FacilityFactory()
+    facility = create_facility()
     base = timezone.now() - timedelta(days=3)
-    InventoryLogFactory(facility=facility, timestamp=base, consumption=10.0, inventory_level=500.0)
-    InventoryLogFactory(facility=facility, timestamp=base + timedelta(days=1), consumption=12.0, inventory_level=490.0)
-    forecast = ForecastFactory(
+    create_inventory_log(facility=facility, timestamp=base, consumption=10.0, inventory_level=500.0)
+    create_inventory_log(facility=facility, timestamp=base + timedelta(days=1), consumption=12.0, inventory_level=490.0)
+    forecast = create_forecast(
         facility=facility,
         predictions_json=[
             {"day": 1, "p50": 100.0},
@@ -91,10 +91,11 @@ def test_facility_chart_forecast_overlay_uses_future_horizon_timestamps(
     def _noop_legend(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr("fuelsense.core.admin.plt.plot", _capture_plot)
-    monkeypatch.setattr("fuelsense.core.admin.plt.legend", _noop_legend)
-
-    response = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
+    with (
+        patch("fuelsense.core.admin.plt.plot", side_effect=_capture_plot),
+        patch("fuelsense.core.admin.plt.legend", side_effect=_noop_legend),
+    ):
+        response = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
     _check(response.status_code == HTTP_OK)
 
     forecast_plot_calls = [call for call in captured if call[1].get("label") == "Forecast p50"]
@@ -110,9 +111,9 @@ def test_facility_chart_forecast_overlay_uses_future_horizon_timestamps(
 @pytest.mark.django_db
 def test_facility_chart_handles_malformed_forecast_points_and_shows_reliability_notes(admin_client: Client) -> None:
     """Facility admin view should show reliability warnings for malformed forecast points."""
-    facility = FacilityFactory()
-    InventoryLogFactory(facility=facility)
-    forecast = ForecastFactory(
+    facility = create_facility()
+    create_inventory_log(facility=facility)
+    forecast = create_forecast(
         facility=facility,
         model_version="fallback-local",
         horizon_days=4,

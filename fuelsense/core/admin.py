@@ -6,9 +6,9 @@ from __future__ import annotations
 import base64
 import logging
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib as mpl
 from celery import current_app
@@ -35,9 +35,41 @@ from fuelsense.core.models import (
 from fuelsense.core.reorder import filter_below_reorder
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
+    from django.db.models import QuerySet
     from django.http import HttpRequest, HttpResponse
+    from django.urls.resolvers import URLPattern, URLResolver
+
+    InventoryLogInlineBase = admin.TabularInline[InventoryLog, Facility]
+    DeliveryItemInlineBase = admin.TabularInline[DeliveryItem, Delivery]
+    FacilityAdminBase = admin.ModelAdmin[Facility]
+    DeliveryAdminBase = admin.ModelAdmin[Delivery]
+    PlanningCycleAdminBase = admin.ModelAdmin[PlanningCycle]
+    ModelRegistryAdminBase = admin.ModelAdmin[ModelRegistry]
+    FuelTypeAdminBase = admin.ModelAdmin[FuelType]
+    DepotAdminBase = admin.ModelAdmin[Depot]
+    DepotFacilityAssignmentAdminBase = admin.ModelAdmin[DepotFacilityAssignment]
+    VehicleAdminBase = admin.ModelAdmin[Vehicle]
+    InventoryLogAdminBase = admin.ModelAdmin[InventoryLog]
+    DeliveryItemAdminBase = admin.ModelAdmin[DeliveryItem]
+    ForecastAdminBase = admin.ModelAdmin[Forecast]
+    AnomalyAlertAdminBase = admin.ModelAdmin[AnomalyAlert]
+else:
+    InventoryLogInlineBase = admin.TabularInline
+    DeliveryItemInlineBase = admin.TabularInline
+    FacilityAdminBase = admin.ModelAdmin
+    DeliveryAdminBase = admin.ModelAdmin
+    PlanningCycleAdminBase = admin.ModelAdmin
+    ModelRegistryAdminBase = admin.ModelAdmin
+    FuelTypeAdminBase = admin.ModelAdmin
+    DepotAdminBase = admin.ModelAdmin
+    DepotFacilityAssignmentAdminBase = admin.ModelAdmin
+    VehicleAdminBase = admin.ModelAdmin
+    InventoryLogAdminBase = admin.ModelAdmin
+    DeliveryItemAdminBase = admin.ModelAdmin
+    ForecastAdminBase = admin.ModelAdmin
+    AnomalyAlertAdminBase = admin.ModelAdmin
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
@@ -54,11 +86,11 @@ def _figure_to_base64() -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list[float], int]:
+def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[datetime], list[float], int]:
     if not isinstance(forecast.predictions_json, list):
         return [], [], 0
 
-    timestamps: list[object] = []
+    timestamps: list[datetime] = []
     values: list[float] = []
     skipped_points = 0
 
@@ -76,9 +108,13 @@ def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list
             day_offset = idx
 
         raw_p50 = raw.get("p50")
-        try:
-            p50_value = float(raw_p50)
-        except (TypeError, ValueError):
+        if isinstance(raw_p50, (int, float, str)):
+            try:
+                p50_value = float(raw_p50)
+            except ValueError:
+                skipped_points += 1
+                continue
+        else:
             skipped_points += 1
             continue
         if not math.isfinite(p50_value):
@@ -103,7 +139,7 @@ def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list
     return timestamps, values, skipped_points
 
 
-class InventoryLogInline(admin.TabularInline):
+class InventoryLogInline(InventoryLogInlineBase):
     """Inline inventory log preview for facility admin pages."""
 
     model = InventoryLog
@@ -112,7 +148,7 @@ class InventoryLogInline(admin.TabularInline):
     ordering = ("-timestamp",)
 
 
-class DeliveryItemInline(admin.TabularInline):
+class DeliveryItemInline(DeliveryItemInlineBase):
     """Inline delivery items editor for delivery admin pages."""
 
     model = DeliveryItem
@@ -120,7 +156,7 @@ class DeliveryItemInline(admin.TabularInline):
 
 
 @admin.register(Facility)
-class FacilityAdmin(admin.ModelAdmin):
+class FacilityAdmin(FacilityAdminBase):
     """Admin configuration for facilities with forecast and inventory charts."""
 
     list_display = (
@@ -138,7 +174,7 @@ class FacilityAdmin(admin.ModelAdmin):
     change_form_template = "admin/core/facility_change_form.html"
 
     @admin.action(description="Trigger Emergency Delivery")
-    def trigger_emergency_delivery(self, request: HttpRequest, queryset: Sequence[Facility]) -> None:
+    def trigger_emergency_delivery(self, request: HttpRequest, queryset: QuerySet[Facility]) -> None:
         """Queue emergency delivery tasks for selected facilities."""
         for facility in queryset:
             current_app.send_task("fuelsense.core.tasks.trigger_emergency_delivery", args=[facility.id])
@@ -162,7 +198,7 @@ class FacilityAdmin(admin.ModelAdmin):
             extra_context["forecast_stale_days"] = 0
             extra_context["forecast_skipped_points"] = 0
 
-            forecast_timestamps: list[object] = []
+            forecast_timestamps: list[datetime] = []
             forecast_values: list[float] = []
             if latest_forecast:
                 forecast_timestamps, forecast_values, skipped_points = _extract_forecast_p50_points(latest_forecast)
@@ -173,15 +209,15 @@ class FacilityAdmin(admin.ModelAdmin):
                 extra_context["forecast_stale_days"] = forecast_age_days
                 extra_context["forecast_skipped_points"] = skipped_points
 
-            logs = facility.inventory_logs.order_by("-timestamp")[:30]
-            logs = list(reversed(logs))
+            logs_qs = facility.inventory_logs.order_by("-timestamp")[:30]
+            logs = list(reversed(logs_qs))
             if logs:
                 plt.figure(figsize=(8, 3))
                 x = [log.timestamp for log in logs]
-                plt.plot(x, [log.consumption for log in logs], label="Consumption")
-                plt.plot(x, [log.inventory_level for log in logs], label="Inventory")
+                plt.plot(cast("Any", x), [log.consumption for log in logs], label="Consumption")
+                plt.plot(cast("Any", x), [log.inventory_level for log in logs], label="Inventory")
                 if forecast_timestamps and forecast_values:
-                    plt.plot(forecast_timestamps, forecast_values, "o-", label="Forecast p50")
+                    plt.plot(cast("Any", forecast_timestamps), forecast_values, "o-", label="Forecast p50")
                 plt.legend()
                 extra_context["facility_chart_b64"] = _figure_to_base64()
             extra_context["recent_alerts"] = facility.alerts.order_by("-timestamp")[:10]
@@ -189,7 +225,7 @@ class FacilityAdmin(admin.ModelAdmin):
 
 
 @admin.register(Delivery)
-class DeliveryAdmin(admin.ModelAdmin):
+class DeliveryAdmin(DeliveryAdminBase):
     """Admin configuration for deliveries with route map rendering."""
 
     list_display = ("id", "depot", "vehicle", "planned_date", "status", "total_cost", "total_distance_km")
@@ -232,7 +268,7 @@ class DeliveryAdmin(admin.ModelAdmin):
 
 
 @admin.register(PlanningCycle)
-class PlanningCycleAdmin(admin.ModelAdmin):
+class PlanningCycleAdmin(PlanningCycleAdminBase):
     """Read-only admin representation for planning cycle execution records."""
 
     list_display = (
@@ -251,7 +287,7 @@ class PlanningCycleAdmin(admin.ModelAdmin):
 
 
 @admin.register(ModelRegistry)
-class ModelRegistryAdmin(admin.ModelAdmin):
+class ModelRegistryAdmin(ModelRegistryAdminBase):
     """Admin configuration for model registry lifecycle operations."""
 
     list_display = ("model_type", "facility", "version", "is_active", "trained_at", "drift_ratio")
@@ -259,7 +295,7 @@ class ModelRegistryAdmin(admin.ModelAdmin):
     actions = ("promote_to_active", "rollback_to_previous")
 
     @admin.action(description="Promote to Active")
-    def promote_to_active(self, request: HttpRequest, queryset: Sequence[ModelRegistry]) -> None:
+    def promote_to_active(self, request: HttpRequest, queryset: QuerySet[ModelRegistry]) -> None:
         """Promote selected models as active and demote siblings for same scope."""
         for model in queryset:
             ModelRegistry.objects.filter(model_type=model.model_type, facility=model.facility).exclude(
@@ -270,13 +306,15 @@ class ModelRegistryAdmin(admin.ModelAdmin):
         self.message_user(request, f"Promoted {queryset.count()} model(s).", messages.SUCCESS)
 
     @admin.action(description="Rollback to Previous")
-    def rollback_to_previous(self, request: HttpRequest, queryset: Sequence[ModelRegistry]) -> None:
+    def rollback_to_previous(self, request: HttpRequest, queryset: QuerySet[ModelRegistry]) -> None:
         """Rollback selected models to the highest available previous version."""
         rolled = 0
         for model in queryset:
             prev = (
                 ModelRegistry.objects.filter(
-                    model_type=model.model_type, facility=model.facility, version__lt=model.version,
+                    model_type=model.model_type,
+                    facility=model.facility,
+                    version__lt=model.version,
                 )
                 .order_by("-version")
                 .first()
@@ -292,56 +330,56 @@ class ModelRegistryAdmin(admin.ModelAdmin):
 
 
 @admin.register(FuelType)
-class FuelTypeAdmin(admin.ModelAdmin):
+class FuelTypeAdmin(FuelTypeAdminBase):
     """Admin registration for fuel type records."""
 
     list_display = ()
 
 
 @admin.register(Depot)
-class DepotAdmin(admin.ModelAdmin):
+class DepotAdmin(DepotAdminBase):
     """Admin registration for depots."""
 
     list_display = ()
 
 
 @admin.register(DepotFacilityAssignment)
-class DepotFacilityAssignmentAdmin(admin.ModelAdmin):
+class DepotFacilityAssignmentAdmin(DepotFacilityAssignmentAdminBase):
     """Admin registration for depot-facility assignments."""
 
     list_display = ()
 
 
 @admin.register(Vehicle)
-class VehicleAdmin(admin.ModelAdmin):
+class VehicleAdmin(VehicleAdminBase):
     """Admin registration for vehicle records."""
 
     list_display = ()
 
 
 @admin.register(InventoryLog)
-class InventoryLogAdmin(admin.ModelAdmin):
+class InventoryLogAdmin(InventoryLogAdminBase):
     """Admin registration for inventory logs."""
 
     list_display = ()
 
 
 @admin.register(DeliveryItem)
-class DeliveryItemAdmin(admin.ModelAdmin):
+class DeliveryItemAdmin(DeliveryItemAdminBase):
     """Admin registration for delivery items."""
 
     list_display = ()
 
 
 @admin.register(Forecast)
-class ForecastAdmin(admin.ModelAdmin):
+class ForecastAdmin(ForecastAdminBase):
     """Admin registration for forecast records."""
 
     list_display = ()
 
 
 @admin.register(AnomalyAlert)
-class AnomalyAlertAdmin(admin.ModelAdmin):
+class AnomalyAlertAdmin(AnomalyAlertAdminBase):
     """Admin registration for anomaly alerts."""
 
     list_display = ()
@@ -379,10 +417,10 @@ def admin_dashboard(request: HttpRequest) -> HttpResponse:
     )
 
 
-def get_admin_urls(urls: Callable[[], list[object]]) -> Callable[[], list[object]]:
+def get_admin_urls(urls: Callable[[], list[URLResolver | URLPattern]]) -> Callable[[], list[URLResolver | URLPattern]]:
     """Inject FuelSense dashboard route into Django admin URL set."""
 
-    def get_urls() -> list[object]:
+    def get_urls() -> list[URLResolver | URLPattern]:
         custom_urls = [
             path("fuelsense/dashboard/", admin.site.admin_view(admin_dashboard), name="fuelsense-dashboard"),
         ]
@@ -391,4 +429,4 @@ def get_admin_urls(urls: Callable[[], list[object]]) -> Callable[[], list[object
     return get_urls
 
 
-admin.site.get_urls = get_admin_urls(admin.site.get_urls)
+cast(Any, admin.site).get_urls = get_admin_urls(admin.site.get_urls)  # noqa: TC006

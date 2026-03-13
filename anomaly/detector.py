@@ -2,13 +2,57 @@
 
 from __future__ import annotations
 
+import importlib
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol, cast
 
-import joblib
 import numpy as np
+
+
+class _JoblibLike(Protocol):
+    def load(self, filename: Path) -> object: ...
+
+
+class _ForestLike(Protocol):
+    def decision_function(self, features_array: np.ndarray) -> np.ndarray: ...
+
+    def predict(self, features_array: np.ndarray) -> np.ndarray: ...
+
+
+class _ClassifierLike(Protocol):
+    def predict(self, features_array: np.ndarray) -> np.ndarray: ...
+
+    def predict_proba(self, features_array: np.ndarray) -> np.ndarray: ...
+
+
+def _load_artifact(path: str | Path) -> object:
+    module = importlib.import_module("joblib")
+    load_fn = getattr(module, "load", None)
+    if not callable(load_fn):
+        msg = "joblib.load is unavailable"
+        raise TypeError(msg)
+    loader: _JoblibLike = module
+    return loader.load(Path(path))
+
+
+def _as_forest(model: object) -> _ForestLike:
+    decision_fn = getattr(model, "decision_function", None)
+    predict_fn = getattr(model, "predict", None)
+    if callable(decision_fn) and callable(predict_fn):
+        return cast("_ForestLike", model)
+    msg = "Loaded forest artifact does not implement required interface"
+    raise TypeError(msg)
+
+
+def _as_classifier(model: object) -> _ClassifierLike:
+    predict_fn = getattr(model, "predict", None)
+    proba_fn = getattr(model, "predict_proba", None)
+    if callable(predict_fn) and callable(proba_fn):
+        return cast("_ClassifierLike", model)
+    msg = "Loaded classifier artifact does not implement required interface"
+    raise TypeError(msg)
 
 
 class AnomalyType(StrEnum):
@@ -49,8 +93,8 @@ class AnomalyDetector:
 
     def __init__(self) -> None:
         """Initialize unloaded detector components."""
-        self.forest: Any | None = None
-        self.classifier: Any | None = None
+        self.forest: _ForestLike | None = None
+        self.classifier: _ClassifierLike | None = None
 
     @property
     def is_loaded(self) -> bool:
@@ -59,8 +103,8 @@ class AnomalyDetector:
 
     def load(self, forest_path: str | Path, classifier_path: str | Path) -> None:
         """Load isolation forest and classifier artifacts from disk."""
-        self.forest = joblib.load(Path(forest_path))
-        self.classifier = joblib.load(Path(classifier_path))
+        self.forest = _as_forest(_load_artifact(forest_path))
+        self.classifier = _as_classifier(_load_artifact(classifier_path))
 
     def detect(self, actual: float, predicted: float, rolling_std: float, features: dict[str, float]) -> dict[str, Any]:
         """Detect anomalies using z-score gate then model-based classification."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from . import base as base_settings
 from .base import *  # noqa: F403
@@ -15,4 +16,4 @@ SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "true").lower() == "true"
 SECURE_HSTS_SECONDS = 31536000
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
-STATIC_ROOT = "/app/staticfiles"
+STATIC_ROOT = Path("/app/staticfiles")

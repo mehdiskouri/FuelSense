@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
+from unittest.mock import patch
+
 import pytest
 from django.core.management import call_command, get_commands
 from django.core.management.base import CommandError
 
-from fuelsense.core.tests.factories import FacilityFactory
+from fuelsense.core.tests.factories import create_facility
 
 
 def _check(condition: object, message: str | None = None) -> None:
@@ -33,21 +36,21 @@ def test_train_models_command_is_registered() -> None:
 
 @pytest.mark.django_db
 def test_train_models_dry_run_does_not_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Dry-run should print planned work but never enqueue Celery tasks."""
-    FacilityFactory(is_active=True)
-    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
+    create_facility(is_active=True)
 
     def _no_dispatch(*args: object, **kwargs: object) -> None:
         _ = args, kwargs
         msg = "delay should not be called during dry-run"
         raise AssertionError(msg)
 
-    monkeypatch.setattr("fuelsense.core.management.commands.train_models.retrain_model.delay", _no_dispatch)
-
-    call_command("train_models", "--dry-run")
+    with (
+        patch.dict(os.environ, {"FUELSENSE_ENABLE_TRAINING_TASKS": "1"}, clear=False),
+        patch("fuelsense.core.management.commands.train_models.retrain_model.delay", side_effect=_no_dispatch),
+    ):
+        call_command("train_models", "--dry-run")
     out = capsys.readouterr().out
     _check("DRY-RUN" in out)
     _check("demand:facility" in out)
@@ -56,12 +59,11 @@ def test_train_models_dry_run_does_not_dispatch(
 
 @pytest.mark.django_db
 def test_train_models_enqueues_demand_and_anomaly(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Default run should enqueue both demand and anomaly training jobs."""
-    facility = FacilityFactory(is_active=True)
-    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
+    facility = create_facility(is_active=True)
+    facility_id = int(facility.id)
 
     seen: list[tuple[int | None, str]] = []
 
@@ -69,22 +71,22 @@ def test_train_models_enqueues_demand_and_anomaly(
         seen.append((facility_id, model_type))
         return _AsyncResult(task_id=f"task-{len(seen)}", payload={"status": "promoted"})
 
-    monkeypatch.setattr("fuelsense.core.management.commands.train_models.retrain_model.delay", _delay)
-
-    call_command("train_models")
+    with (
+        patch.dict(os.environ, {"FUELSENSE_ENABLE_TRAINING_TASKS": "1"}, clear=False),
+        patch("fuelsense.core.management.commands.train_models.retrain_model.delay", side_effect=_delay),
+    ):
+        call_command("train_models")
     out = capsys.readouterr().out
 
-    _check((facility.id, "DEMAND_FORECAST") in seen)
+    _check((facility_id, "DEMAND_FORECAST") in seen)
     _check((None, "ANOMALY_DETECTOR") in seen)
     _check("Enqueued" in out)
 
 
 @pytest.mark.django_db
-def test_train_models_wait_raises_on_failed_task(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_train_models_wait_raises_on_failed_task() -> None:
     """Wait mode should raise when any enqueued task reports failure."""
-    FacilityFactory(is_active=True)
-    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
-
+    create_facility(is_active=True)
     queue: list[_AsyncResult] = [
         _AsyncResult("task-1", {"status": "promoted"}),
         _AsyncResult("task-2", {"status": "failed"}),
@@ -94,30 +96,31 @@ def test_train_models_wait_raises_on_failed_task(monkeypatch: pytest.MonkeyPatch
         _ = facility_id, model_type
         return queue.pop(0)
 
-    monkeypatch.setattr("fuelsense.core.management.commands.train_models.retrain_model.delay", _delay)
-
-    with pytest.raises(CommandError):
+    with (
+        patch.dict(os.environ, {"FUELSENSE_ENABLE_TRAINING_TASKS": "1"}, clear=False),
+        patch("fuelsense.core.management.commands.train_models.retrain_model.delay", side_effect=_delay),
+        pytest.raises(CommandError),
+    ):
         call_command("train_models", "--models", "all", "--wait")
 
 
 @pytest.mark.django_db
 def test_train_models_anomaly_ignores_facility_selectors(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Anomaly-only mode should ignore facility filters and run globally."""
-    FacilityFactory(is_active=True)
-    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "1")
-
+    create_facility(is_active=True)
     seen: list[tuple[int | None, str]] = []
 
     def _delay(facility_id: int | None, model_type: str) -> _AsyncResult:
         seen.append((facility_id, model_type))
         return _AsyncResult(task_id="task-a", payload={"status": "promoted"})
 
-    monkeypatch.setattr("fuelsense.core.management.commands.train_models.retrain_model.delay", _delay)
-
-    call_command("train_models", "--models", "anomaly", "--facility-id", "123")
+    with (
+        patch.dict(os.environ, {"FUELSENSE_ENABLE_TRAINING_TASKS": "1"}, clear=False),
+        patch("fuelsense.core.management.commands.train_models.retrain_model.delay", side_effect=_delay),
+    ):
+        call_command("train_models", "--models", "anomaly", "--facility-id", "123")
     out = capsys.readouterr().out
 
     _check(seen == [(None, "ANOMALY_DETECTOR")])
@@ -126,20 +129,20 @@ def test_train_models_anomaly_ignores_facility_selectors(
 
 @pytest.mark.django_db
 def test_train_models_respects_disabled_gate(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Disabled training gate should skip all task dispatching."""
-    FacilityFactory(is_active=True)
-    monkeypatch.setenv("FUELSENSE_ENABLE_TRAINING_TASKS", "0")
+    create_facility(is_active=True)
 
     def _no_dispatch(*args: object, **kwargs: object) -> None:
         _ = args, kwargs
         msg = "delay should not be called when training is disabled"
         raise AssertionError(msg)
 
-    monkeypatch.setattr("fuelsense.core.management.commands.train_models.retrain_model.delay", _no_dispatch)
-
-    call_command("train_models")
+    with (
+        patch.dict(os.environ, {"FUELSENSE_ENABLE_TRAINING_TASKS": "0"}, clear=False),
+        patch("fuelsense.core.management.commands.train_models.retrain_model.delay", side_effect=_no_dispatch),
+    ):
+        call_command("train_models")
     out = capsys.readouterr().out
     _check("Training tasks are disabled" in out)

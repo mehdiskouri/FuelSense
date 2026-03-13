@@ -31,7 +31,7 @@ def _safe_float(value: object, default: float = 0.0) -> float:
     if value is None:
         return default
     try:
-        return float(value)
+        return float(cast("Any", value))
     except (TypeError, ValueError):
         return default
 
@@ -254,10 +254,14 @@ def build_drift_data() -> list[dict[str, Any]]:
         )
         recent_predictions = _extract_prediction_series(getattr(latest_forecast, "predictions_json", []))
 
+        model_pk = getattr(model, "pk", None)
+        if model_pk is None:
+            continue
+
         payloads.append(
             {
                 "facility_id": int(model_facility_id),
-                "model_registry_id": int(cast("int", model.pk)),
+                "model_registry_id": int(model_pk),
                 "baseline_rmse": _safe_float(baseline_rmse),
                 "recent_actuals": [float(x) for x in recent_actuals],
                 "recent_predictions": recent_predictions,

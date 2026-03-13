@@ -186,7 +186,10 @@ class AnomalyTrainer:
 
         y_if_pred = (iforest.predict(x_if_test) == -1).astype(np.int32)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            y_if_test, y_if_pred, average="binary", zero_division=0,
+            y_if_test,
+            y_if_pred,
+            average="binary",
+            zero_division=0,
         )
 
         cls_accuracy = float(np.mean(classifier.predict(x_cls_test) == y_cls_test))

@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import perf_counter
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, ParamSpec, TypedDict, TypeVar, cast
 
 import httpx
 from celery import chord, shared_task
@@ -45,9 +45,20 @@ from ml_pipeline.anomaly_training import AnomalyTrainer
 from ml_pipeline.drift import DriftMonitor
 from ml_pipeline.training import ForecastTrainer, TrainingDataset
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 logger = logging.getLogger(__name__)
 
 RECOVERABLE_TASK_EXCEPTIONS = (RuntimeError, ValueError, TypeError, KeyError)
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _shared_task(*args: object, **kwargs: object) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Return a typed Celery task decorator for strict mypy compatibility."""
+    decorator = cast("Any", shared_task)(*args, **kwargs)
+    return cast("Callable[[Callable[P, R]], Callable[P, R]]", decorator)
 
 
 def _default_parallel_workers() -> int:
@@ -285,8 +296,9 @@ def _resolve_reorder_point_for_forecast(
     if not is_fallback_forecast and model_reorder_point > 0.0:
         return model_reorder_point, "model_forecast"
 
-    if is_reliable_reorder_point(facility.dynamic_reorder_point):
-        return float(facility.dynamic_reorder_point), "preserved_prior"
+    dynamic_reorder_point = facility.dynamic_reorder_point
+    if is_reliable_reorder_point(dynamic_reorder_point) and dynamic_reorder_point is not None:
+        return float(dynamic_reorder_point), "preserved_prior"
 
     return _fallback_reorder_point_from_recent_consumption(facility), "heuristic_fallback"
 
@@ -386,7 +398,7 @@ def _persist_anomaly_alert_if_needed(payload: _AnomalyFacilityPayload, result: d
     return True
 
 
-@shared_task(queue="default")
+@_shared_task(queue="default")
 def daily_tick() -> dict[str, Any]:
     """Dispatch the daily ingestion, ML, and planning workflow."""
     facility_ids = list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
@@ -414,7 +426,7 @@ def daily_tick() -> dict[str, Any]:
     return {"facility_count": len(facility_ids), "status": "dispatched"}
 
 
-@shared_task(queue="default")
+@_shared_task(queue="default")
 def ingest_hourly() -> dict[str, Any]:
     """Emit hourly ingestion heartbeat metadata."""
     count = Facility.objects.filter(is_active=True).count()
@@ -422,7 +434,7 @@ def ingest_hourly() -> dict[str, Any]:
     return {"active_facilities": count}
 
 
-@shared_task(queue="default")
+@_shared_task(queue="default")
 def ingest_facility_data(facility_id: int) -> dict[str, Any]:
     """Append one synthetic inventory snapshot for a facility."""
     facility = Facility.objects.get(id=facility_id)
@@ -443,7 +455,7 @@ def ingest_facility_data(facility_id: int) -> dict[str, Any]:
     return {"facility_id": facility_id, "timestamp": now.isoformat()}
 
 
-@shared_task(queue="default")
+@_shared_task(queue="default")
 def ingestion_complete() -> dict[str, Any]:
     """Report completion stats for recent ingestion activity."""
     recent_logs = InventoryLog.objects.filter(timestamp__gte=timezone.now() - timedelta(hours=1)).count()
@@ -451,7 +463,7 @@ def ingestion_complete() -> dict[str, Any]:
     return {"recent_logs": recent_logs}
 
 
-@shared_task(queue="default")
+@_shared_task(queue="default")
 def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]:
     """Generate and persist forecasts while updating reorder thresholds."""
     if facility_ids is None:
@@ -538,7 +550,7 @@ def run_batch_forecasts(facility_ids: list[int] | None = None) -> dict[str, Any]
     return {"facility_count": len(facility_ids), "created": created}
 
 
-@shared_task(queue="default")
+@_shared_task(queue="default")
 def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[str, Any]:
     """Run anomaly detection for facilities and persist resulting alerts."""
     if facility_ids is None:
@@ -566,7 +578,7 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
     return {"facility_count": len(facility_ids), "anomaly_count": anomaly_count}
 
 
-@shared_task(queue="training")
+@_shared_task(queue="training")
 def check_all_drift() -> dict[str, Any]:
     """Evaluate model drift and enqueue retraining for drifting facilities."""
     drift_payload = build_drift_data()
@@ -586,7 +598,7 @@ def check_all_drift() -> dict[str, Any]:
     return summary
 
 
-@shared_task(queue="training")
+@_shared_task(queue="training")
 def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
     """Train and potentially promote a model for a facility scope."""
     if os.environ.get("FUELSENSE_ENABLE_TRAINING_TASKS", "0") != "1":
@@ -607,6 +619,14 @@ def retrain_model(facility_id: int | None, model_type: str) -> dict[str, Any]:
 
 def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
     model_type = ModelRegistry.ModelType.DEMAND_FORECAST
+
+    if facility_id is None:
+        return {
+            "facility_id": facility_id,
+            "model_type": model_type,
+            "status": "skipped",
+            "error": "facility_id_required",
+        }
 
     dataset = extract_training_data(facility_id)
     trainer = ForecastTrainer()
@@ -694,13 +714,14 @@ def _retrain_anomaly_detector_model() -> dict[str, Any]:
             "error": str(exc),
         }
 
-    ModelRegistry.objects.filter(model_type=model_type, facility_id=None, is_active=True).update(is_active=False)
+    ModelRegistry.objects.filter(model_type=model_type, facility__isnull=True, is_active=True).update(is_active=False)
     max_version = (
-        ModelRegistry.objects.filter(model_type=model_type, facility_id=None).aggregate(v=Max("version")).get("v") or 0
+        ModelRegistry.objects.filter(model_type=model_type, facility__isnull=True).aggregate(v=Max("version")).get("v")
+        or 0
     )
     ModelRegistry.objects.create(
         model_type=model_type,
-        facility_id=None,
+        facility=None,
         mlflow_run_id=str(result["run_id"]),
         version=int(max_version) + 1,
         is_active=True,
@@ -1100,7 +1121,7 @@ def _emergency_fail_and_return(
     }
 
 
-@shared_task(queue="planning")
+@_shared_task(queue="planning")
 def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
     """Execute scheduled or manual planning and persist delivery outputs."""
     cycle, early_response = _resolve_cycle_for_execution(cycle_id)
@@ -1198,7 +1219,7 @@ def run_planning_cycle(cycle_id: int | None = None) -> dict[str, Any]:
         }
 
 
-@shared_task(queue="planning")
+@_shared_task(queue="planning")
 def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict[str, Any]:
     """Execute emergency planning for provided facilities under one cycle."""
     cycle, early_response = _resolve_cycle_for_execution(cycle_id)
@@ -1300,7 +1321,7 @@ def run_emergency_planning_cycle(cycle_id: int, facility_ids: list[int]) -> dict
         return {"cycle_id": cycle_id, "error": str(exc), "status": PlanningCycle.ExecutionStatus.FAILED}
 
 
-@shared_task(queue="planning")
+@_shared_task(queue="planning")
 def trigger_emergency_delivery(
     facility_id: int,
     cycle_id: int | None = None,

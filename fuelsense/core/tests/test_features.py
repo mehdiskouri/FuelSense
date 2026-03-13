@@ -16,11 +16,11 @@ from fuelsense.core.features import (
     extract_training_data,
 )
 from fuelsense.core.tests.factories import (
-    DeliveryFactory,
-    DeliveryItemFactory,
-    ForecastFactory,
-    InventoryLogFactory,
-    ModelRegistryFactory,
+    create_delivery,
+    create_delivery_item,
+    create_forecast,
+    create_inventory_log,
+    create_model_registry,
 )
 
 LOOKBACK_SHAPE = (90, 6)
@@ -31,8 +31,8 @@ ANOMALY_FEATURE_COUNT = 7
 ZSCORE_TOLERANCE = 1e-5
 
 
-class _HasId(Protocol):
-    id: int
+class _HasPk(Protocol):
+    pk: int
 
 
 def _check(condition: object, message: str | None = None) -> None:
@@ -41,12 +41,12 @@ def _check(condition: object, message: str | None = None) -> None:
 
 
 @pytest.mark.django_db
-def test_build_lookback_matrix_shape_and_dow_features(sample_facilities: list[_HasId]) -> None:
+def test_build_lookback_matrix_shape_and_dow_features(sample_facilities: list[_HasPk]) -> None:
     """Lookback matrix builder should return finite tensors with expected shape."""
     facility = sample_facilities[0]
     base = timezone.now() - timedelta(days=120)
     for i in range(95):
-        InventoryLogFactory(
+        create_inventory_log(
             facility=facility,
             timestamp=base + timedelta(days=i),
             consumption=float(i),
@@ -55,18 +55,18 @@ def test_build_lookback_matrix_shape_and_dow_features(sample_facilities: list[_H
             solar_irradiance=300.0,
         )
 
-    matrix = build_lookback_matrix([int(facility.id)])
+    matrix = build_lookback_matrix([int(facility.pk)])
     _check(matrix.shape == (1, 90, 6))
     _check(np.all(np.isfinite(matrix)))
 
 
 @pytest.mark.django_db
-def test_extract_training_data_temporal_split(sample_facilities: list[_HasId]) -> None:
+def test_extract_training_data_temporal_split(sample_facilities: list[_HasPk]) -> None:
     """Training extractor should produce deterministic temporal split dimensions."""
     facility = sample_facilities[0]
     base = timezone.now() - timedelta(days=220)
     for i in range(170):
-        InventoryLogFactory(
+        create_inventory_log(
             facility=facility,
             timestamp=base + timedelta(days=i),
             consumption=10 + i,
@@ -75,7 +75,7 @@ def test_extract_training_data_temporal_split(sample_facilities: list[_HasId]) -
             solar_irradiance=500.0,
         )
 
-    data = extract_training_data(int(facility.id))
+    data = extract_training_data(int(facility.pk))
     _check(data["test_data"].ndim == TRAIN_SEQUENCE_NDIM)
     _check(data["test_data"].shape[1:] == LOOKBACK_SHAPE)
     _check(data["test_targets"].shape[1] == TEST_TARGET_HORIZON)
@@ -85,13 +85,13 @@ def test_extract_training_data_temporal_split(sample_facilities: list[_HasId]) -
 
 
 @pytest.mark.django_db
-def test_build_drift_data_structure(sample_facilities: list[_HasId]) -> None:
+def test_build_drift_data_structure(sample_facilities: list[_HasPk]) -> None:
     """Drift payload builder should expose required keys for monitoring."""
     facility = sample_facilities[0]
     for i in range(8):
-        InventoryLogFactory(facility=facility, consumption=20 + i)
-    ForecastFactory(facility=facility, predictions_json=[{"day": 1, "p50": 10, "p90": 12}])
-    ModelRegistryFactory(
+        create_inventory_log(facility=facility, consumption=20 + i)
+    create_forecast(facility=facility, predictions_json=[{"day": 1, "p50": 10, "p90": 12}])
+    create_model_registry(
         facility=facility,
         model_type="DEMAND_FORECAST",
         is_active=True,
@@ -105,13 +105,13 @@ def test_build_drift_data_structure(sample_facilities: list[_HasId]) -> None:
 
 
 @pytest.mark.django_db
-def test_build_anomaly_features_returns_expected_shape(sample_facilities: list[_HasId]) -> None:
+def test_build_anomaly_features_returns_expected_shape(sample_facilities: list[_HasPk]) -> None:
     """Anomaly feature builder should emit full expected feature vector."""
     facility = sample_facilities[0]
     base = timezone.now() - timedelta(days=7)
 
     for i in range(7):
-        InventoryLogFactory(
+        create_inventory_log(
             facility=facility,
             timestamp=base + timedelta(days=i),
             consumption=30.0 + i,
@@ -119,14 +119,14 @@ def test_build_anomaly_features_returns_expected_shape(sample_facilities: list[_
             inventory_level=500.0 - i * 5,
         )
 
-    ForecastFactory(
+    create_forecast(
         facility=facility,
         predictions_json=[{"day": 1, "p10": 27.0, "p50": 30.0, "p90": 34.0}],
     )
-    delivery = DeliveryFactory()
-    DeliveryItemFactory(delivery=delivery, facility=facility, actual_arrival=timezone.now() - timedelta(hours=8))
+    delivery = create_delivery()
+    create_delivery_item(delivery=delivery, facility=facility, actual_arrival=timezone.now() - timedelta(hours=8))
 
-    features = build_anomaly_features(int(facility.id))
+    features = build_anomaly_features(int(facility.pk))
     if features is None:
         msg = "Expected anomaly features"
         raise AssertionError(msg)
@@ -136,14 +136,14 @@ def test_build_anomaly_features_returns_expected_shape(sample_facilities: list[_
 
 
 @pytest.mark.django_db
-def test_build_anomaly_features_zscore_is_correct(sample_facilities: list[_HasId]) -> None:
+def test_build_anomaly_features_zscore_is_correct(sample_facilities: list[_HasPk]) -> None:
     """Anomaly z-score feature should match manual standard-score computation."""
     facility = sample_facilities[0]
     base = timezone.now() - timedelta(days=7)
 
     values = [20.0, 19.0, 21.0, 20.5, 20.2, 20.1, 30.0]
     for i, consumption in enumerate(values):
-        InventoryLogFactory(
+        create_inventory_log(
             facility=facility,
             timestamp=base + timedelta(days=i),
             consumption=consumption,
@@ -151,12 +151,12 @@ def test_build_anomaly_features_zscore_is_correct(sample_facilities: list[_HasId
             inventory_level=500.0,
         )
 
-    ForecastFactory(
+    create_forecast(
         facility=facility,
         predictions_json=[{"day": 1, "p10": 21.0, "p50": 22.0, "p90": 25.0}],
     )
 
-    features = build_anomaly_features(int(facility.id))
+    features = build_anomaly_features(int(facility.pk))
     if features is None:
         msg = "Expected anomaly features"
         raise AssertionError(msg)
@@ -168,8 +168,8 @@ def test_build_anomaly_features_zscore_is_correct(sample_facilities: list[_HasId
 
 
 @pytest.mark.django_db
-def test_build_anomaly_features_returns_none_when_insufficient_data(sample_facilities: list[_HasId]) -> None:
+def test_build_anomaly_features_returns_none_when_insufficient_data(sample_facilities: list[_HasPk]) -> None:
     """Anomaly feature builder should return None for insufficient history."""
     facility = sample_facilities[0]
-    InventoryLogFactory(facility=facility, consumption=20.0)
-    _check(build_anomaly_features(int(facility.id)) is None)
+    create_inventory_log(facility=facility, consumption=20.0)
+    _check(build_anomaly_features(int(facility.pk)) is None)

@@ -7,16 +7,17 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import AbstractContextManager, suppress
+from importlib import import_module
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Protocol, cast, override
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from forecaster.model import DemandTCN, QuantileLoss
 from fuelsense_common.compute import ComputeBackend, DeviceType
@@ -26,20 +27,30 @@ logger = logging.getLogger(__name__)
 
 TARGET_MATRIX_NDIMS = 2
 
-try:
-    import pynvml
-except ImportError:  # pragma: no cover - optional GPU telemetry dependency
-    pynvml = None
+if TYPE_CHECKING:
+    from types import ModuleType
+
+
+def _get_pynvml() -> ModuleType | None:
+    try:
+        module = import_module("pynvml")
+    except ImportError:  # pragma: no cover - optional GPU telemetry dependency
+        return None
+    return module
 
 
 class _GradScalerLike(Protocol):
-    def scale(self, loss: Tensor) -> object: ...
+    def scale(self, loss: Tensor) -> _ScaledLossLike: ...
 
-    def unscale_(self, optimizer: AdamW) -> object: ...
+    def unscale_(self, optimizer: AdamW) -> None: ...
 
-    def step(self, optimizer: AdamW) -> object: ...
+    def step(self, optimizer: AdamW) -> None: ...
 
-    def update(self) -> object: ...
+    def update(self) -> None: ...
+
+
+class _ScaledLossLike(Protocol):
+    def backward(self) -> None: ...
 
 
 def _cuda_autocast() -> AbstractContextManager[object]:
@@ -79,7 +90,8 @@ class CUDAForecaster(ComputeBackend):
             raise RuntimeError(msg)
 
         self.cuda_device = torch.device("cuda:0")
-        self.stream = torch.cuda.Stream(device=self.cuda_device)
+        stream_ctor = cast("Any", torch.cuda.Stream)
+        self.stream = cast("torch.cuda.Stream", stream_ctor(device=self.cuda_device))
         self.train_num_workers = int(
             os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0)))),
         )
@@ -102,7 +114,9 @@ class CUDAForecaster(ComputeBackend):
             return
         with torch.no_grad(), _cuda_autocast():
             dummy = torch.zeros(
-                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device,
+                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES),
+                dtype=torch.float32,
+                device=self.cuda_device,
             )
             _ = self.model(dummy)
         torch.cuda.synchronize(self.cuda_device)
@@ -121,6 +135,7 @@ class CUDAForecaster(ComputeBackend):
         }
 
         try:
+            pynvml = _get_pynvml()
             if pynvml is None:
                 details["gpu_utilization"] = None
             else:
@@ -144,7 +159,7 @@ class CUDAForecaster(ComputeBackend):
         self.model.eval()
 
         try:
-            self.model = torch.compile(self.model, mode="reduce-overhead")
+            self.model = cast("nn.Module", torch.compile(self.model, mode="reduce-overhead"))
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
             logger.debug("torch.compile unavailable for CUDA forecaster model: %s", exc)
 
@@ -166,7 +181,7 @@ class CUDAForecaster(ComputeBackend):
             gpu_tensor = cpu_tensor.to(self.cuda_device, non_blocking=True)
             preds = self.model(gpu_tensor)
             preds_cpu = preds.detach().cpu()
-        return preds_cpu.numpy()
+        return cast("np.ndarray", preds_cpu.numpy())
 
     @staticmethod
     def _expand_targets(raw: Tensor) -> Tensor:
@@ -183,7 +198,7 @@ class CUDAForecaster(ComputeBackend):
         train_y: Tensor,
         batch_size: int,
     ) -> DataLoader[tuple[Tensor, Tensor]]:
-        train_ds = TensorDataset(train_x, train_y)
+        train_ds = cast("Dataset[tuple[Tensor, Tensor]]", TensorDataset(train_x, train_y))
         return DataLoader(
             train_ds,
             batch_size=batch_size,
@@ -250,8 +265,7 @@ class CUDAForecaster(ComputeBackend):
             train_target = self._expand_targets(full_train_y)
             return float(torch.sqrt(torch.mean((train_p50 - train_target) ** 2)).detach().cpu().item())
 
-    @override
-    def train(
+    def train(  # noqa: PLR0913
         self,
         train_data: np.ndarray,
         train_targets: np.ndarray,
