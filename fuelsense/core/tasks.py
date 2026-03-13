@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import perf_counter
@@ -41,9 +43,22 @@ from fuelsense.core.models import (
 )
 from fuelsense.core.reorder import filter_below_reorder, is_reliable_reorder_point
 from fuelsense.core.routing import build_optimizer_request
-from ml_pipeline.anomaly_training import AnomalyTrainer
-from ml_pipeline.drift import DriftMonitor
-from ml_pipeline.training import ForecastTrainer, TrainingDataset
+
+AnomalyTrainer: Any = None
+DriftMonitor: Any = None
+ForecastTrainer: Any = None
+TrainingDataset: Any = None
+
+with suppress(ModuleNotFoundError):  # pragma: no cover
+    AnomalyTrainer = importlib.import_module("ml_pipeline.anomaly_training").AnomalyTrainer
+
+with suppress(ModuleNotFoundError):  # pragma: no cover
+    DriftMonitor = importlib.import_module("ml_pipeline.drift").DriftMonitor
+
+with suppress(ModuleNotFoundError):  # pragma: no cover
+    training_module = importlib.import_module("ml_pipeline.training")
+    ForecastTrainer = training_module.ForecastTrainer
+    TrainingDataset = training_module.TrainingDataset
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,6 +68,30 @@ logger = logging.getLogger(__name__)
 RECOVERABLE_TASK_EXCEPTIONS = (RuntimeError, ValueError, TypeError, KeyError)
 P = ParamSpec("P")
 R = TypeVar("R")
+
+
+def _resolve_drift_monitor() -> type[object]:
+    monitor_cls = DriftMonitor
+    if monitor_cls is None:
+        monitor_cls = importlib.import_module("ml_pipeline.drift").DriftMonitor
+    return cast("type[object]", monitor_cls)
+
+
+def _resolve_forecast_training_types() -> tuple[type[object], type[object]]:
+    trainer_cls = ForecastTrainer
+    dataset_cls = TrainingDataset
+    if trainer_cls is None or dataset_cls is None:
+        training_module = importlib.import_module("ml_pipeline.training")
+        trainer_cls = training_module.ForecastTrainer
+        dataset_cls = training_module.TrainingDataset
+    return cast("type[object]", trainer_cls), cast("type[object]", dataset_cls)
+
+
+def _resolve_anomaly_trainer() -> type[object]:
+    trainer_cls = AnomalyTrainer
+    if trainer_cls is None:
+        trainer_cls = importlib.import_module("ml_pipeline.anomaly_training").AnomalyTrainer
+    return cast("type[object]", trainer_cls)
 
 
 def _shared_task(*args: object, **kwargs: object) -> Callable[[Callable[P, R]], Callable[P, R]]:
@@ -582,7 +621,8 @@ def run_batch_anomaly_detection(facility_ids: list[int] | None = None) -> dict[s
 def check_all_drift() -> dict[str, Any]:
     """Evaluate model drift and enqueue retraining for drifting facilities."""
     drift_payload = build_drift_data()
-    summary = DriftMonitor().check_all_facilities(drift_payload)
+    monitor_cls = cast("Any", _resolve_drift_monitor())
+    summary = cast("Any", monitor_cls()).check_all_facilities(drift_payload)
     retrain_task: Any = retrain_model
     for facility_id in summary["retrain_facility_ids"]:
         retrain_task.delay(int(facility_id), "DEMAND_FORECAST")
@@ -595,7 +635,7 @@ def check_all_drift() -> dict[str, Any]:
         },
     )
     summary["models"] = summary["facilities_checked"]
-    return summary
+    return cast("dict[str, Any]", summary)
 
 
 @_shared_task(queue="training")
@@ -629,17 +669,21 @@ def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
         }
 
     dataset = extract_training_data(facility_id)
-    trainer = ForecastTrainer()
+    trainer_cls, dataset_cls = _resolve_forecast_training_types()
+    trainer = cast("Any", trainer_cls)()
     try:
-        result = trainer.train_and_register(
+        result = cast(
+            "dict[str, Any]",
+            trainer.train_and_register(
             facility_id=facility_id,
-            dataset=TrainingDataset(
-                train_data=dataset["train_data"],
-                train_targets=dataset["train_targets"],
-                val_data=dataset["val_data"],
-                val_targets=dataset["val_targets"],
-                test_data=dataset["test_data"],
-                test_targets=dataset["test_targets"],
+            dataset=cast("Any", dataset_cls)(
+                    train_data=dataset["train_data"],
+                    train_targets=dataset["train_targets"],
+                    val_data=dataset["val_data"],
+                    val_targets=dataset["val_targets"],
+                    test_data=dataset["test_data"],
+                    test_targets=dataset["test_targets"],
+                ),
             ),
         )
     except RECOVERABLE_TASK_EXCEPTIONS as exc:
@@ -702,7 +746,7 @@ def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
 def _retrain_anomaly_detector_model() -> dict[str, Any]:
     model_type = ModelRegistry.ModelType.ANOMALY_DETECTOR
 
-    trainer = AnomalyTrainer()
+    trainer = cast("Any", _resolve_anomaly_trainer())()
     try:
         result = trainer.train_and_register()
     except RECOVERABLE_TASK_EXCEPTIONS as exc:
