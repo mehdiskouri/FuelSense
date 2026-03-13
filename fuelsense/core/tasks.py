@@ -675,8 +675,8 @@ def _retrain_demand_forecast_model(facility_id: int | None) -> dict[str, Any]:
         result = cast(
             "dict[str, Any]",
             trainer.train_and_register(
-            facility_id=facility_id,
-            dataset=cast("Any", dataset_cls)(
+                facility_id=facility_id,
+                dataset=cast("Any", dataset_cls)(
                     train_data=dataset["train_data"],
                     train_targets=dataset["train_targets"],
                     val_data=dataset["val_data"],
