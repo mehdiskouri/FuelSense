@@ -1,4 +1,4 @@
-#torch==2.10.0+cu130
+torch==2.10.0+cu130
 fastapi==0.135.1
 uvicorn[standard]==0.41.0
 pydantic==2.12.5
