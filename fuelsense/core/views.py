@@ -166,7 +166,8 @@ class PlanningViewSet(viewsets.ViewSet):
         serializer = PlanningTriggerSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         trigger_type = serializer.validated_data["trigger_type"]
-        facility_ids = serializer.validated_data.get("facility_ids", [])
+        facility_ids_raw = serializer.validated_data.get("facility_ids", [])
+        facility_ids = facility_ids_raw if facility_ids_raw is not None else []
 
         if trigger_type == "EMERGENCY" and not facility_ids:
             return Response(

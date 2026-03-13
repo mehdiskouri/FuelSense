@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import torch
 from torch import Tensor, nn
 
@@ -31,7 +29,7 @@ class CausalConv1d(nn.Module):
         out = self.conv(out)
         if self.padding > 0:
             out = out[:, :, : -self.padding]
-        return cast("Tensor", out)
+        return out
 
 
 class TCNBlock(nn.Module):
@@ -66,7 +64,7 @@ class TCNBlock(nn.Module):
         out = self.relu(out)
         out = self.dropout(out)
 
-        return cast("Tensor", self.relu(out + residual))
+        return self.relu(out + residual)
 
 
 class DemandTCN(nn.Module):
@@ -100,7 +98,7 @@ class DemandTCN(nn.Module):
         last_timestep = x[:, :, -1]
         out = last_timestep
         out = self.head(out)
-        return cast("Tensor", out.view(-1, self.HORIZON, self.N_QUANTILES))
+        return out.view(-1, self.HORIZON, self.N_QUANTILES)
 
 
 class QuantileLoss(nn.Module):
