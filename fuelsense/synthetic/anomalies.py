@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 
 @dataclass
 class AnomalyEvent:
+    """Metadata describing an injected anomaly window."""
+
     anomaly_type: str
     start_day: int
     duration: int
@@ -18,7 +22,7 @@ class AnomalyEvent:
 class AnomalyInjector:
     """Inject random anomalies into daily consumption traces."""
 
-    anomaly_types = [
+    anomaly_types: ClassVar[list[str]] = [
         "LEAK",
         "THEFT",
         "EQUIPMENT_DEGRADATION",
@@ -26,7 +30,10 @@ class AnomalyInjector:
         "SENSOR_FAULT",
     ]
 
+    SENSOR_FAULT_ZERO_PROBABILITY: ClassVar[float] = 0.5
+
     def __init__(self, trigger_probability: float = 0.05) -> None:
+        """Configure anomaly trigger chance and initialize per-facility state."""
         self.trigger_probability = trigger_probability
         self._active: dict[str, AnomalyEvent] = {}
         self._shift_multiplier: dict[str, float] = {}
@@ -48,7 +55,7 @@ class AnomalyInjector:
         facility_key: str,
         day: int,
         consumption: float,
-        base_load: float,
+        _base_load: float,
         rng: np.random.Generator,
     ) -> tuple[float, AnomalyEvent | None]:
         """Apply anomaly process and return modified consumption plus optional label."""
@@ -80,7 +87,7 @@ class AnomalyInjector:
             day_offset = max(day - active.start_day + 1, 1)
             return output * (1.0 + active.magnitude * day_offset), active
         if active.anomaly_type == "SENSOR_FAULT":
-            return (0.0 if rng.random() < 0.5 else float("nan")), active
+            return (0.0 if rng.random() < self.SENSOR_FAULT_ZERO_PROBABILITY else float("nan")), active
 
         # Demand shift label for its trigger day.
         return output, active

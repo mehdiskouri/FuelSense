@@ -1,9 +1,12 @@
+"""Training and MLflow registration pipeline for anomaly detection models."""
+
 # pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from tempfile import gettempdir
 from typing import Any
 
 import joblib
@@ -17,15 +20,19 @@ from anomaly.detector import AnomalyDetector
 
 
 class AnomalyTrainer:
+    """Trains anomaly detector models and logs resulting artifacts to MLflow."""
+
     EXPERIMENT_NAME = "anomaly-detector"
 
     def __init__(self, tracking_uri: str | None = None, random_state: int = 42) -> None:
+        """Configure trainer defaults and initialize MLflow tracking context."""
         self.random_state = random_state
         self.tracking_uri = tracking_uri or os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
         mlflow.set_tracking_uri(self.tracking_uri)
         mlflow.set_experiment(self.EXPERIMENT_NAME)
 
     def generate_synthetic_anomalies(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Generate synthetic normal/anomalous samples and associated labels."""
         rng = np.random.default_rng(self.random_state)
         normal_count = 17350
 
@@ -123,23 +130,25 @@ class AnomalyTrainer:
         anomaly_typed = np.vstack(typed_blocks).astype(np.float32)
         y_typed = np.concatenate(labels)
 
-        X_all = np.vstack([normal.astype(np.float32), anomaly_typed])
+        x_all = np.vstack([normal.astype(np.float32), anomaly_typed])
         y_if = np.concatenate([np.zeros(normal_count, dtype=np.int32), np.ones(anomaly_typed.shape[0], dtype=np.int32)])
-        return X_all, y_if, y_typed
+        return x_all, y_if, y_typed
 
     @staticmethod
-    def train_isolation_forest(X: np.ndarray) -> IsolationForest:
+    def train_isolation_forest(x: np.ndarray) -> IsolationForest:
+        """Fit an Isolation Forest model for binary anomaly screening."""
         model = IsolationForest(
             n_estimators=AnomalyDetector.N_ESTIMATORS,
             contamination=AnomalyDetector.CONTAMINATION,
             random_state=42,
             n_jobs=-1,
         )
-        model.fit(X)
+        model.fit(x)
         return model
 
     @staticmethod
-    def train_type_classifier(X_anomalies: np.ndarray, y_labels: np.ndarray) -> RandomForestClassifier:
+    def train_type_classifier(x_anomalies: np.ndarray, y_labels: np.ndarray) -> RandomForestClassifier:
+        """Fit anomaly subtype classifier on anomaly-only training samples."""
         clf = RandomForestClassifier(
             n_estimators=300,
             max_depth=10,
@@ -147,41 +156,43 @@ class AnomalyTrainer:
             random_state=42,
             n_jobs=-1,
         )
-        clf.fit(X_anomalies, y_labels)
+        clf.fit(x_anomalies, y_labels)
         return clf
 
     def train_and_register(self, artifact_dir: str | Path | None = None) -> dict[str, Any]:
-        X_all, y_if, y_typed = self.generate_synthetic_anomalies()
+        """Train anomaly models, register metrics, and persist model artifacts."""
+        x_all, y_if, y_typed = self.generate_synthetic_anomalies()
         anomaly_count = int(np.sum(y_if == 1))
-        X_anomalies = X_all[-anomaly_count:]
+        x_anomalies = x_all[-anomaly_count:]
 
-        X_if_train, X_if_test, _y_if_train, y_if_test = train_test_split(
-            X_all,
+        x_if_train, x_if_test, _y_if_train, y_if_test = train_test_split(
+            x_all,
             y_if,
             test_size=0.2,
             random_state=self.random_state,
             stratify=y_if,
         )
 
-        X_cls_train, X_cls_test, y_cls_train, y_cls_test = train_test_split(
-            X_anomalies,
+        x_cls_train, x_cls_test, y_cls_train, y_cls_test = train_test_split(
+            x_anomalies,
             y_typed,
             test_size=0.2,
             random_state=self.random_state,
             stratify=y_typed,
         )
 
-        iforest = self.train_isolation_forest(X_if_train)
-        classifier = self.train_type_classifier(X_cls_train, y_cls_train)
+        iforest = self.train_isolation_forest(x_if_train)
+        classifier = self.train_type_classifier(x_cls_train, y_cls_train)
 
-        y_if_pred = (iforest.predict(X_if_test) == -1).astype(np.int32)
+        y_if_pred = (iforest.predict(x_if_test) == -1).astype(np.int32)
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_if_test, y_if_pred, average="binary", zero_division=0,
         )
 
-        cls_accuracy = float(np.mean(classifier.predict(X_cls_test) == y_cls_test))
+        cls_accuracy = float(np.mean(classifier.predict(x_cls_test) == y_cls_test))
 
-        artifact_root = Path(artifact_dir or os.environ.get("ANOMALY_ARTIFACT_DIR", "/tmp/fuelsense-anomaly"))
+        default_artifact_root = Path(gettempdir()) / "fuelsense-anomaly"
+        artifact_root = Path(artifact_dir or os.environ.get("ANOMALY_ARTIFACT_DIR", str(default_artifact_root)))
         artifact_root.mkdir(parents=True, exist_ok=True)
         forest_path = artifact_root / "isolation_forest.joblib"
         classifier_path = artifact_root / "type_classifier.joblib"
@@ -197,10 +208,10 @@ class AnomalyTrainer:
                     "normal_samples": int(np.sum(y_if == 0)),
                     "anomaly_samples": anomaly_count,
                     "type_count": 5,
-                    "if_train_size": int(X_if_train.shape[0]),
-                    "if_test_size": int(X_if_test.shape[0]),
-                    "cls_train_size": int(X_cls_train.shape[0]),
-                    "cls_test_size": int(X_cls_test.shape[0]),
+                    "if_train_size": int(x_if_train.shape[0]),
+                    "if_test_size": int(x_if_test.shape[0]),
+                    "cls_train_size": int(x_cls_train.shape[0]),
+                    "cls_test_size": int(x_cls_test.shape[0]),
                     "rf_estimators": 300,
                     "rf_max_depth": 10,
                     "rf_min_samples_leaf": 2,

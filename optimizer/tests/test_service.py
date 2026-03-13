@@ -1,13 +1,27 @@
+"""Service API tests for optimizer backend lifecycle and optimize endpoint behavior."""
+
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from optimizer import service
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+HTTP_OK = 200
+HTTP_UNPROCESSABLE_ENTITY = 422
+HTTP_SERVICE_UNAVAILABLE = 503
+
+
+def _check(condition: object, message: str | None = None) -> None:
+    if not bool(condition):
+        raise AssertionError(message if message is not None else "check failed")
 
 
 def _valid_optimize_payload() -> dict[str, object]:
@@ -29,15 +43,17 @@ def _valid_optimize_payload() -> dict[str, object]:
 
 @pytest.mark.asyncio
 async def test_optimize_returns_503_without_backend() -> None:
+    """Optimize endpoint should report unavailable when backend is not loaded."""
     service.backend = None
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/optimize", json=_valid_optimize_payload())
-    assert response.status_code == 503
+    _check(response.status_code == HTTP_SERVICE_UNAVAILABLE)
 
 
 @pytest.mark.asyncio
 async def test_optimize_returns_200_with_mock_backend() -> None:
+    """Optimize endpoint should return optimal response for a functioning backend."""
     class MockBackend:
         device = service.DeviceType.CPU
 
@@ -47,7 +63,7 @@ async def test_optimize_returns_200_with_mock_backend() -> None:
         def health_check(self) -> dict[str, object]:
             return {"status": "ok", "model_loaded": True}
 
-        def solve(self, **kwargs: Any) -> dict[str, object]:
+        def solve(self, **kwargs: object) -> dict[str, object]:
             _ = kwargs
             return {
                 "status": "optimal",
@@ -80,32 +96,36 @@ async def test_optimize_returns_200_with_mock_backend() -> None:
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/optimize", json=_valid_optimize_payload())
-    assert response.status_code == 200
-    assert response.json()["status"] == "optimal"
+    _check(response.status_code == HTTP_OK)
+    _check(response.json()["status"] == "optimal")
 
 
 @pytest.mark.asyncio
 async def test_optimize_invalid_request_returns_422() -> None:
+    """Invalid payloads should fail FastAPI validation with 422 status."""
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/optimize", json={"depot_lat": 1.0})
-    assert response.status_code == 422
+    _check(response.status_code == HTTP_UNPROCESSABLE_ENTITY)
 
 
 @pytest.mark.asyncio
 async def test_health_and_metrics_endpoints() -> None:
+    """Health and metrics endpoints should be reachable after app startup."""
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         health = await client.get("/health")
         metrics = await client.get("/metrics")
-    assert health.status_code == 200
-    assert metrics.status_code == 200
-    assert "text/plain" in metrics.headers["content-type"]
+    _check(health.status_code == HTTP_OK)
+    _check(metrics.status_code == HTTP_OK)
+    _check("text/plain" in metrics.headers["content-type"])
 
 
 @pytest.mark.asyncio
 async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Backend:
+    """Lifespan startup should resolve and warm backend exactly once."""
+    class _Backend(service.ComputeBackend):
+        device = service.DeviceType.CPU
         warmed = False
 
         def warmup(self) -> None:
@@ -114,7 +134,7 @@ async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
         def health_check(self) -> dict[str, object]:
             return {"solver": "mock"}
 
-        def solve(self, **kwargs: Any) -> dict[str, object]:
+        def solve(self, **kwargs: object) -> dict[str, object]:
             _ = kwargs
             return {
                 "status": "optimal",
@@ -129,7 +149,11 @@ async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
     backend = _Backend()
     monkeypatch.setattr("optimizer.service.resolve_device", lambda: service.DeviceType.CPU)
-    monkeypatch.setattr("optimizer.service.get_backend", lambda name, device: backend)
+    def _get_backend(_name: str, _device: service.DeviceType) -> _Backend:
+        _ = _name, _device
+        return backend
+
+    monkeypatch.setattr("optimizer.service.get_backend", _get_backend)
 
     @asynccontextmanager
     async def _run() -> AsyncIterator[None]:
@@ -137,28 +161,31 @@ async def test_lifespan_loads_backend(monkeypatch: pytest.MonkeyPatch) -> None:
             yield
 
     async with _run():
-        assert service.backend is backend
-        assert backend.warmed is True
+        _check(service.backend is backend)
+        _check(backend.warmed is True)
 
 
 @pytest.mark.asyncio
 async def test_health_degraded_when_backend_none() -> None:
+    """Health endpoint should report degraded when backend is unavailable."""
     service.backend = None
     service.device_type = service.DeviceType.CPU
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         health = await client.get("/health")
-    assert health.status_code == 200
-    assert health.json()["status"] == "degraded"
+    _check(health.status_code == HTTP_OK)
+    _check(health.json()["status"] == "degraded")
 
 
 @pytest.mark.asyncio
 async def test_lifespan_runtimeerror_keeps_backend_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backend load failures during lifespan should leave backend unset."""
     monkeypatch.setattr("optimizer.service.resolve_device", lambda: service.DeviceType.CUDA)
 
     def _raise(name: str, device: object) -> object:
         _ = name, device
-        raise RuntimeError("no backend")
+        msg = "no backend"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr("optimizer.service.get_backend", _raise)
 
@@ -168,11 +195,12 @@ async def test_lifespan_runtimeerror_keeps_backend_unavailable(monkeypatch: pyte
             yield
 
     async with _run():
-        assert service.backend is None
+        _check(service.backend is None)
 
 
 @pytest.mark.asyncio
 async def test_optimize_returns_503_when_backend_has_no_solve() -> None:
+    """Backends lacking `solve` should produce service-unavailable optimize responses."""
     class NoSolveBackend:
         def health_check(self) -> dict[str, object]:
             return {"status": "ok"}
@@ -181,4 +209,4 @@ async def test_optimize_returns_503_when_backend_has_no_solve() -> None:
     transport = ASGITransport(app=service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/optimize", json=_valid_optimize_payload())
-    assert response.status_code == 503
+    _check(response.status_code == HTTP_SERVICE_UNAVAILABLE)

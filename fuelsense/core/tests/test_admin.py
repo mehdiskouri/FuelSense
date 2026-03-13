@@ -1,7 +1,9 @@
+"""Admin UI tests for list/change pages and facility chart rendering behavior."""
+
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from django.utils import timezone
@@ -14,9 +16,22 @@ from fuelsense.core.tests.factories import (
     ModelRegistryFactory,
 )
 
+if TYPE_CHECKING:
+    from django.test import Client
+
+HTTP_OK = 200
+EXPECTED_PLOT_CALLS = 1
+EXPECTED_HORIZON_POINTS = 3
+
+
+def _check(condition: object, message: str | None = None) -> None:
+    if not bool(condition):
+        raise AssertionError(message if message is not None else "check failed")
+
 
 @pytest.mark.django_db
-def test_admin_list_pages_render(admin_client: Any) -> None:
+def test_admin_list_pages_render(admin_client: Client) -> None:
+    """Core admin list pages should render successfully for staff users."""
     urls = [
         "/admin/core/facility/",
         "/admin/core/delivery/",
@@ -25,30 +40,32 @@ def test_admin_list_pages_render(admin_client: Any) -> None:
     ]
     for url in urls:
         response = admin_client.get(url)
-        assert response.status_code == 200
+        _check(response.status_code == HTTP_OK)
 
 
 @pytest.mark.django_db
-def test_admin_custom_pages_render(admin_client: Any) -> None:
+def test_admin_custom_pages_render(admin_client: Client) -> None:
+    """Custom facility/delivery change pages and dashboard should render."""
     facility = FacilityFactory()
     delivery = DeliveryFactory()
     ModelRegistryFactory()
 
     facility_page = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
-    assert facility_page.status_code == 200
+    _check(facility_page.status_code == HTTP_OK)
 
     delivery_page = admin_client.get(f"/admin/core/delivery/{delivery.id}/change/")
-    assert delivery_page.status_code == 200
+    _check(delivery_page.status_code == HTTP_OK)
 
     dashboard_page = admin_client.get("/admin/fuelsense/dashboard/")
-    assert dashboard_page.status_code == 200
+    _check(dashboard_page.status_code == HTTP_OK)
 
 
 @pytest.mark.django_db
 def test_facility_chart_forecast_overlay_uses_future_horizon_timestamps(
-    admin_client: Any,
+    admin_client: Client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Forecast overlay plot should use forecast-day offsets from forecast creation time."""
     facility = FacilityFactory()
     base = timezone.now() - timedelta(days=3)
     InventoryLogFactory(facility=facility, timestamp=base, consumption=10.0, inventory_level=500.0)
@@ -71,24 +88,28 @@ def test_facility_chart_forecast_overlay_uses_future_horizon_timestamps(
         captured.append((args, kwargs))
         return []
 
+    def _noop_legend(*_args: object, **_kwargs: object) -> None:
+        return None
+
     monkeypatch.setattr("fuelsense.core.admin.plt.plot", _capture_plot)
-    monkeypatch.setattr("fuelsense.core.admin.plt.legend", lambda *args, **kwargs: None)
+    monkeypatch.setattr("fuelsense.core.admin.plt.legend", _noop_legend)
 
     response = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
-    assert response.status_code == 200
+    _check(response.status_code == HTTP_OK)
 
     forecast_plot_calls = [call for call in captured if call[1].get("label") == "Forecast p50"]
-    assert len(forecast_plot_calls) == 1
-    x_values = list(forecast_plot_calls[0][0][0])
-    assert len(x_values) == 3
-    assert x_values[0] == created_at + timedelta(days=1)
-    assert x_values[1] == created_at + timedelta(days=2)
-    assert x_values[2] == created_at + timedelta(days=3)
-    assert len(set(x_values)) == 3
+    _check(len(forecast_plot_calls) == EXPECTED_PLOT_CALLS)
+    x_values = cast("list[object]", forecast_plot_calls[0][0][0])
+    _check(len(x_values) == EXPECTED_HORIZON_POINTS)
+    _check(x_values[0] == created_at + timedelta(days=1))
+    _check(x_values[1] == created_at + timedelta(days=2))
+    _check(x_values[2] == created_at + timedelta(days=3))
+    _check(len(set(x_values)) == EXPECTED_HORIZON_POINTS)
 
 
 @pytest.mark.django_db
-def test_facility_chart_handles_malformed_forecast_points_and_shows_reliability_notes(admin_client: Any) -> None:
+def test_facility_chart_handles_malformed_forecast_points_and_shows_reliability_notes(admin_client: Client) -> None:
+    """Facility admin view should show reliability warnings for malformed forecast points."""
     facility = FacilityFactory()
     InventoryLogFactory(facility=facility)
     forecast = ForecastFactory(
@@ -107,10 +128,10 @@ def test_facility_chart_handles_malformed_forecast_points_and_shows_reliability_
     forecast.save(update_fields=["created_at"])
 
     response = admin_client.get(f"/admin/core/facility/{facility.id}/change/")
-    assert response.status_code == 200
+    _check(response.status_code == HTTP_OK)
     content = response.content.decode("utf-8")
-    assert "Latest forecast model" in content
-    assert "fallback-local" in content
-    assert "Forecast source is fallback-local" in content
-    assert "Forecast may be stale" in content
-    assert "Skipped malformed forecast points: 2" in content
+    _check("Latest forecast model" in content)
+    _check("fallback-local" in content)
+    _check("Forecast source is fallback-local" in content)
+    _check("Forecast may be stale" in content)
+    _check("Skipped malformed forecast points: 2" in content)

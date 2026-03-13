@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from django.core.cache import cache
 from django.db.models import Avg
 
-from fuelsense.core.models import Facility
+from fuelsense.core.models import AnomalyAlert, Delivery, Facility, Forecast, InventoryLog
 from fuelsense.core.reorder import filter_below_reorder
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 
 class DashboardKpis(TypedDict):
+    """Shape of cached dashboard KPI values."""
+
     avg_delivery_cost_last_30d: float
     forecast_accuracy_rmse: float
     anomaly_detection_rate: float
@@ -44,6 +48,7 @@ def _is_dashboard_kpis(payload: object) -> bool:
 
 
 def get_or_set_facility_inventory(facility_id: int) -> float:
+    """Return cached facility inventory or compute and cache it."""
     key = f"cache:facility:{facility_id}:latest_inventory"
     value = cache.get(key)
     if value is not None:
@@ -57,6 +62,7 @@ def get_or_set_facility_inventory(facility_id: int) -> float:
 
 
 def get_or_set_reorder_status(facility_id: int) -> str:
+    """Return cached reorder status for a facility."""
     key = f"cache:facility:{facility_id}:reorder_status"
     value = cache.get(key)
     if value is not None:
@@ -69,6 +75,7 @@ def get_or_set_reorder_status(facility_id: int) -> str:
 
 
 def get_or_set_dashboard_kpis() -> DashboardKpis:
+    """Return cached dashboard KPIs or compute a fresh payload."""
     key = "cache:dashboard:kpis"
     cached = cache.get(key)
     if _is_dashboard_kpis(cached):
@@ -80,8 +87,6 @@ def get_or_set_dashboard_kpis() -> DashboardKpis:
             facilities_below_reorder=int(cached.get("facilities_below_reorder", 0)),
             deliveries_in_transit=int(cached.get("deliveries_in_transit", 0)),
         )
-
-    from fuelsense.core.models import AnomalyAlert, Delivery, Forecast, InventoryLog
 
     payload: DashboardKpis = {
         "avg_delivery_cost_last_30d": _to_float(
@@ -100,6 +105,7 @@ def get_or_set_dashboard_kpis() -> DashboardKpis:
 
 
 def invalidate_facility_cache(facility_id: int) -> None:
+    """Invalidate facility-scoped cache keys after state changes."""
     cache.delete_many(
         [
             f"cache:facility:{facility_id}:latest_inventory",

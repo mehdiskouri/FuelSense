@@ -1,45 +1,66 @@
+"""Tests for anomaly trainer synthetic generation, model fitting, and MLflow logging."""
+
 # pyright: reportUnknownLambdaType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 
 from ml_pipeline.anomaly_training import AnomalyTrainer
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+FEATURE_COUNT = 7
+SAMPLE_SIZE = 8
+MIN_PRECISION = 0.80
+MIN_RECALL = 0.70
+EXPECTED_ARTIFACTS = 2
+
+
+def _check(condition: object, message: str | None = None) -> None:
+    if not bool(condition):
+        raise AssertionError(message if message is not None else "check failed")
+
 
 def test_generate_synthetic_anomalies_shape_and_labels() -> None:
+    """Synthetic anomaly generation should return aligned feature and label tensors."""
     trainer = AnomalyTrainer(tracking_uri="sqlite:////tmp/fuelsense-mlflow-anomaly-test.db")
-    X, y_if, y_typed = trainer.generate_synthetic_anomalies()
+    x, y_if, y_typed = trainer.generate_synthetic_anomalies()
 
-    assert X.shape[1] == 7
-    assert X.shape[0] == y_if.shape[0]
-    assert int(np.sum(y_if == 1)) == y_typed.shape[0]
-    assert set(np.unique(y_typed).tolist()) == {0, 1, 2, 3, 4}
+    _check(x.shape[1] == FEATURE_COUNT)
+    _check(x.shape[0] == y_if.shape[0])
+    _check(int(np.sum(y_if == 1)) == y_typed.shape[0])
+    _check(set(np.unique(y_typed).tolist()) == {0, 1, 2, 3, 4})
 
 
 def test_train_models_expose_required_interfaces() -> None:
+    """Trainer models should expose expected predict and score interfaces."""
     trainer = AnomalyTrainer(tracking_uri="sqlite:////tmp/fuelsense-mlflow-anomaly-test.db")
-    X, y_if, y_typed = trainer.generate_synthetic_anomalies()
+    x, y_if, y_typed = trainer.generate_synthetic_anomalies()
     anomaly_count = int(np.sum(y_if == 1))
-    X_anom = X[-anomaly_count:]
+    x_anom = x[-anomaly_count:]
 
-    if_model = trainer.train_isolation_forest(X)
-    cls = trainer.train_type_classifier(X_anom, y_typed)
+    if_model = trainer.train_isolation_forest(x)
+    cls = trainer.train_type_classifier(x_anom, y_typed)
 
-    sample = X[:8]
-    assert if_model.predict(sample).shape == (8,)
-    assert if_model.decision_function(sample).shape == (8,)
-    assert cls.predict(sample).shape == (8,)
-    assert cls.predict_proba(sample).shape[0] == 8
+    sample = x[:SAMPLE_SIZE]
+    _check(if_model.predict(sample).shape == (SAMPLE_SIZE,))
+    _check(if_model.decision_function(sample).shape == (SAMPLE_SIZE,))
+    _check(cls.predict(sample).shape == (SAMPLE_SIZE,))
+    _check(cls.predict_proba(sample).shape[0] == SAMPLE_SIZE)
 
 
-def test_train_and_register_logs_and_quality(monkeypatch: Any, tmp_path: Path) -> None:
+def test_train_and_register_logs_and_quality(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """End-to-end train-and-register should log metrics and artifacts to MLflow."""
     trainer = AnomalyTrainer(tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}")
 
-    logged_params: dict[str, Any] = {}
+    logged_params: dict[str, object] = {}
     logged_metrics: dict[str, float] = {}
     logged_artifacts: list[str] = []
 
@@ -49,26 +70,31 @@ def test_train_and_register_logs_and_quality(monkeypatch: Any, tmp_path: Path) -
     class _Run:
         info = _RunInfo()
 
-        def __enter__(self) -> _Run:
+        def __enter__(self) -> Self:
             return self
 
-        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
             _ = exc_type, exc, tb
 
-    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.start_run", lambda run_name: _Run())
-    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.log_params", lambda p: logged_params.update(p))
-    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.log_metrics", lambda m: logged_metrics.update(m))
+    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.start_run", lambda _run_name: _Run())
+    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.log_params", logged_params.update)
+    monkeypatch.setattr("ml_pipeline.anomaly_training.mlflow.log_metrics", logged_metrics.update)
     monkeypatch.setattr(
         "ml_pipeline.anomaly_training.mlflow.log_artifact",
-        lambda path, artifact_path=None: logged_artifacts.append(str(path)),
+        lambda path, _artifact_path=None: logged_artifacts.append(str(path)),
     )
 
     result = trainer.train_and_register(artifact_dir=tmp_path)
 
-    assert result["run_id"] == "anomaly-run-1"
-    assert logged_params["n_features"] == 7
-    assert "precision" in logged_metrics
-    assert "recall" in logged_metrics
-    assert result["precision"] > 0.80
-    assert result["recall"] > 0.70
-    assert len(logged_artifacts) == 2
+    _check(result["run_id"] == "anomaly-run-1")
+    _check(logged_params["n_features"] == FEATURE_COUNT)
+    _check("precision" in logged_metrics)
+    _check("recall" in logged_metrics)
+    _check(result["precision"] > MIN_PRECISION)
+    _check(result["recall"] > MIN_RECALL)
+    _check(len(logged_artifacts) == EXPECTED_ARTIFACTS)

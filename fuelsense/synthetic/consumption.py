@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
+
+LOW_TEMPERATURE_THRESHOLD = 15.0
+HIGH_TEMPERATURE_THRESHOLD = 25.0
 
 
 def _temperature_response(temperature: float, base_load: float) -> float:
-    if temperature < 15.0:
-        return ((15.0 - temperature) / 15.0) * 0.5 * base_load
-    if temperature > 25.0:
-        return ((temperature - 25.0) / 15.0) * 0.3 * base_load
+    if temperature < LOW_TEMPERATURE_THRESHOLD:
+        return ((LOW_TEMPERATURE_THRESHOLD - temperature) / LOW_TEMPERATURE_THRESHOLD) * 0.5 * base_load
+    if temperature > HIGH_TEMPERATURE_THRESHOLD:
+        return ((temperature - HIGH_TEMPERATURE_THRESHOLD) / LOW_TEMPERATURE_THRESHOLD) * 0.3 * base_load
     return 0.0
 
 

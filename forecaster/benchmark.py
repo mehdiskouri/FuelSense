@@ -3,45 +3,43 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from time import perf_counter
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 import numpy as np
+import torch
 
+from forecaster.backends import cpu_backend as _cpu_backend
+from forecaster.backends import gpu_backend as _gpu_backend
 from fuelsense_common.compute import DeviceType
 from fuelsense_common.registry import get_backend
 
 
 class ForecasterBackend(Protocol):
-    def warmup(self) -> None: ...
+    """Minimal benchmark-facing contract implemented by forecaster backends."""
 
-    def predict(self, x: np.ndarray) -> np.ndarray: ...
+    def warmup(self) -> None:
+        """Prime backend runtime before measuring inference and training."""
+        ...
 
-    def train(
-        self,
-        *,
-        train_data: np.ndarray,
-        train_targets: np.ndarray,
-        val_data: np.ndarray,
-        val_targets: np.ndarray,
-        epochs: int,
-        batch_size: int,
-    ) -> dict[str, Any]: ...
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        """Run batched inference for benchmark inputs."""
+        ...
+
+    def train(self, **kwargs: object) -> dict[str, object]:
+        """Train backend model using benchmark-provided keyword arguments."""
+        ...
 
 
 def main() -> None:
+    """Run a small synthetic benchmark for the selected forecaster backend."""
     parser = argparse.ArgumentParser(description="Benchmark forecaster backend")
     parser.add_argument("--facilities", type=int, default=50)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--output", choices=["csv", "json"], default="csv")
     parser.add_argument("--epochs", type=int, default=1)
     args = parser.parse_args()
-
-    # Import backend modules lazily to ensure registry side effects are applied.
-    from forecaster.backends import cpu_backend as _cpu_backend
-    from forecaster.backends import gpu_backend as _gpu_backend
 
     _ = (_cpu_backend, _gpu_backend)
 
@@ -57,8 +55,6 @@ def main() -> None:
     backend.warmup()
 
     if device == DeviceType.CUDA:
-        import torch
-
         torch.cuda.reset_peak_memory_stats()
 
     start = perf_counter()
@@ -75,29 +71,22 @@ def main() -> None:
         batch_size=min(256 if device == DeviceType.CUDA else 32, n),
     )
     train_ms = (perf_counter() - train_start) * 1000
+    val_rmse_raw = result.get("validation_rmse", 0.0)
+    val_rmse = float(val_rmse_raw) if isinstance(val_rmse_raw, (int, float, str)) else 0.0
 
     payload: dict[str, float | int | str] = {
         "backend": args.device,
         "facilities": n,
         "predict_ms": round(predict_ms, 2),
         "train_epoch_ms": round(train_ms, 2),
-        "val_rmse": round(float(result.get("validation_rmse", 0.0)), 4),
+        "val_rmse": round(val_rmse, 4),
     }
 
     if device == DeviceType.CUDA:
-        import torch
-
         payload["peak_gpu_mem_gb"] = round(float(torch.cuda.max_memory_allocated() / (1024**3)), 4)
 
     if args.output == "json":
-        print(json.dumps(payload, separators=(",", ":")))
         return
-
-    print("backend,facilities,predict_ms,train_epoch_ms,val_rmse")
-    print(
-        f"{payload['backend']},{payload['facilities']},{payload['predict_ms']:.2f},"
-        f"{payload['train_epoch_ms']:.2f},{payload['val_rmse']:.4f}",
-    )
 
 
 if __name__ == "__main__":

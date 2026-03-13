@@ -1,3 +1,5 @@
+"""Factory Boy factories for FuelSense core model test data."""
+
 from __future__ import annotations
 
 # pyright: reportIncompatibleVariableOverride=false
@@ -45,7 +47,11 @@ def _today_date() -> dt.date:
 
 
 class UserFactory(DjangoModelFactory[Any]):
+    """Factory for creating Django auth user instances."""
+
     class Meta:
+        """Factory metadata for user model binding."""
+
         model = get_user_model()
 
     username = Sequence(_user_seq)
@@ -53,7 +59,11 @@ class UserFactory(DjangoModelFactory[Any]):
 
 
 class FuelTypeFactory(DjangoModelFactory[models.FuelType]):
+    """Factory for fuel type records used by facilities and depots."""
+
     class Meta:
+        """Factory metadata for fuel type model binding."""
+
         model = models.FuelType
 
     name = Sequence(_fuel_name_seq)
@@ -63,7 +73,11 @@ class FuelTypeFactory(DjangoModelFactory[models.FuelType]):
 
 
 class FacilityFactory(DjangoModelFactory[models.Facility]):
+    """Factory for facility records with realistic default inventory settings."""
+
     class Meta:
+        """Factory metadata for facility model binding."""
+
         model = models.Facility
 
     name = Sequence(_facility_name_seq)
@@ -77,12 +91,16 @@ class FacilityFactory(DjangoModelFactory[models.Facility]):
     dynamic_reorder_point = 300.0
     delivery_window_start = dt.time(hour=6)
     delivery_window_end = dt.time(hour=14)
-    delivery_days = [0, 1, 2, 3, 4]
+    delivery_days = LazyFunction(lambda: [0, 1, 2, 3, 4])
     is_active = True
 
 
 class DepotFactory(DjangoModelFactory[models.Depot]):
+    """Factory for depots that supply facilities."""
+
     class Meta:
+        """Factory metadata for depot model binding."""
+
         model = models.Depot
 
     name = Sequence(_depot_name_seq)
@@ -93,7 +111,11 @@ class DepotFactory(DjangoModelFactory[models.Depot]):
 
 
 class DepotFacilityAssignmentFactory(DjangoModelFactory[models.DepotFacilityAssignment]):
+    """Factory for depot-to-facility assignment rows."""
+
     class Meta:
+        """Factory metadata for assignment model binding."""
+
         model = models.DepotFacilityAssignment
 
     depot = SubFactory(DepotFactory)
@@ -101,7 +123,11 @@ class DepotFacilityAssignmentFactory(DjangoModelFactory[models.DepotFacilityAssi
 
 
 class VehicleFactory(DjangoModelFactory[models.Vehicle]):
+    """Factory for delivery vehicles attached to depots."""
+
     class Meta:
+        """Factory metadata for vehicle model binding."""
+
         model = models.Vehicle
 
     depot = SubFactory(DepotFactory)
@@ -112,7 +138,11 @@ class VehicleFactory(DjangoModelFactory[models.Vehicle]):
 
 
 class PlanningCycleFactory(DjangoModelFactory[models.PlanningCycle]):
+    """Factory for planning cycle records and baseline KPI values."""
+
     class Meta:
+        """Factory metadata for planning cycle model binding."""
+
         model = models.PlanningCycle
 
     trigger_type = models.PlanningCycle.TriggerType.MANUAL
@@ -126,7 +156,11 @@ class PlanningCycleFactory(DjangoModelFactory[models.PlanningCycle]):
 
 
 class DeliveryFactory(DjangoModelFactory[models.Delivery]):
+    """Factory for delivery objects with route and cost placeholders."""
+
     class Meta:
+        """Factory metadata for delivery model binding."""
+
         model = models.Delivery
 
     depot = SubFactory(DepotFactory)
@@ -135,13 +169,17 @@ class DeliveryFactory(DjangoModelFactory[models.Delivery]):
     status = models.Delivery.Status.PLANNED
     total_distance_km = 100.0
     total_cost = 500.0
-    route_json = []
+    route_json = LazyFunction(list)
     solver_time_ms = 100.0
     created_by_planning_cycle = SubFactory(PlanningCycleFactory)
 
 
 class DeliveryItemFactory(DjangoModelFactory[models.DeliveryItem]):
+    """Factory for individual delivery stop/item records."""
+
     class Meta:
+        """Factory metadata for delivery item model binding."""
+
         model = models.DeliveryItem
 
     delivery = SubFactory(DeliveryFactory)
@@ -153,7 +191,11 @@ class DeliveryItemFactory(DjangoModelFactory[models.DeliveryItem]):
 
 
 class InventoryLogFactory(DjangoModelFactory[models.InventoryLog]):
+    """Factory for facility inventory/consumption telemetry points."""
+
     class Meta:
+        """Factory metadata for inventory log model binding."""
+
         model = models.InventoryLog
 
     facility = SubFactory(FacilityFactory)
@@ -166,18 +208,26 @@ class InventoryLogFactory(DjangoModelFactory[models.InventoryLog]):
 
 
 class ForecastFactory(DjangoModelFactory[models.Forecast]):
+    """Factory for demand forecast rows and quantile prediction payloads."""
+
     class Meta:
+        """Factory metadata for forecast model binding."""
+
         model = models.Forecast
 
     facility = SubFactory(FacilityFactory)
     model_version = "v1"
     horizon_days = 14
-    predictions_json = [{"day": 1, "p10": 10, "p50": 12, "p90": 15}]
+    predictions_json = LazyFunction(lambda: [{"day": 1, "p10": 10, "p50": 12, "p90": 15}])
     rmse = 1.1
 
 
 class AnomalyAlertFactory(DjangoModelFactory[models.AnomalyAlert]):
+    """Factory for anomaly alert records tied to facilities."""
+
     class Meta:
+        """Factory metadata for anomaly alert model binding."""
+
         model = models.AnomalyAlert
 
     facility = SubFactory(FacilityFactory)
@@ -192,7 +242,11 @@ class AnomalyAlertFactory(DjangoModelFactory[models.AnomalyAlert]):
 
 
 class ModelRegistryFactory(DjangoModelFactory[models.ModelRegistry]):
+    """Factory for model registry rows used in promotion and retraining tests."""
+
     class Meta:
+        """Factory metadata for model registry model binding."""
+
         model = models.ModelRegistry
 
     model_type = models.ModelRegistry.ModelType.DEMAND_FORECAST

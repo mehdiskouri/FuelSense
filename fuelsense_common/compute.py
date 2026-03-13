@@ -15,17 +15,25 @@ logger = logging.getLogger(__name__)
 
 
 class DeviceType(Enum):
+    """Supported compute targets for pluggable FuelSense backends."""
+
     CPU = "cpu"
     CUDA = "cuda"
 
 
 @runtime_checkable
 class ComputeBackend(Protocol):
+    """Minimal contract implemented by all runtime compute backends."""
+
     device: DeviceType
 
-    def warmup(self) -> None: ...
+    def warmup(self) -> None:
+        """Prime backend resources ahead of serving traffic."""
+        ...
 
-    def health_check(self) -> dict[str, object]: ...
+    def health_check(self) -> dict[str, object]:
+        """Return backend-specific health and runtime metadata."""
+        ...
 
 
 def resolve_device() -> DeviceType:

@@ -1,8 +1,10 @@
+"""GPU backend tests for prediction, training, load, and NVML health branches."""
+
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -10,7 +12,15 @@ import torch
 
 from forecaster.backends.gpu_backend import CUDAForecaster
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+
+
+def _check(condition: object, message: str | None = None) -> None:
+    if not bool(condition):
+        raise AssertionError(message if message is not None else "check failed")
 
 
 def _synthetic_data(n: int = 16) -> tuple[np.ndarray, np.ndarray]:
@@ -21,20 +31,23 @@ def _synthetic_data(n: int = 16) -> tuple[np.ndarray, np.ndarray]:
 
 
 def test_gpu_backend_predict_shape() -> None:
+    """GPU backend prediction should return `(batch, horizon, quantiles)` output."""
     backend = CUDAForecaster()
     x, _ = _synthetic_data(8)
     out = backend.predict(x)
-    assert out.shape == (8, 14, 3)
+    _check(out.shape == (8, 14, 3))
 
 
 def test_gpu_backend_health_fields() -> None:
+    """GPU backend health payload should expose CUDA device metadata."""
     backend = CUDAForecaster()
     health = backend.health_check()
-    assert health["device"] == "cuda"
-    assert "gpu_name" in health
+    _check(health["device"] == "cuda")
+    _check("gpu_name" in health)
 
 
 def test_gpu_backend_train_smoke() -> None:
+    """GPU training smoke test should complete and report at least one epoch."""
     backend = CUDAForecaster()
     x, y = _synthetic_data(40)
     result = backend.train(
@@ -46,10 +59,11 @@ def test_gpu_backend_train_smoke() -> None:
         batch_size=8,
         patience=3,
     )
-    assert result["epochs_trained"] >= 1
+    _check(result["epochs_trained"] >= 1)
 
 
 def test_gpu_backend_train_accepts_horizon_targets() -> None:
+    """GPU backend should train successfully on horizon-shaped targets."""
     backend = CUDAForecaster()
     x, _ = _synthetic_data(36)
     rng = np.random.default_rng(123)
@@ -63,10 +77,11 @@ def test_gpu_backend_train_accepts_horizon_targets() -> None:
         batch_size=8,
         patience=2,
     )
-    assert result["epochs_trained"] >= 1
+    _check(result["epochs_trained"] >= 1)
 
 
 def test_gpu_backend_init_raises_without_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CUDA backend init should fail when CUDA availability is forced false."""
     monkeypatch.setattr("forecaster.backends.gpu_backend.torch.cuda.is_available", lambda: False)
     with pytest.raises(RuntimeError):
         CUDAForecaster()
@@ -74,6 +89,7 @@ def test_gpu_backend_init_raises_without_cuda(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_gpu_backend_predict_raises_if_model_none() -> None:
+    """Predict should raise when model is missing after backend initialization."""
     backend = CUDAForecaster()
     backend.model = None
     x, _ = _synthetic_data(2)
@@ -83,14 +99,19 @@ def test_gpu_backend_predict_raises_if_model_none() -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_gpu_backend_load_model_compile_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Model load should continue when optional `torch.compile` raises."""
     backend = CUDAForecaster()
-    assert backend.model is not None
+    model = backend.model
+    if model is None:
+        msg = "Backend model should be initialized"
+        raise AssertionError(msg)
     state_path = tmp_path / "gpu_state.pt"
-    torch.save(backend.model.state_dict(), state_path)
+    torch.save(model.state_dict(), state_path)
 
     def _compile_fail(*args: object, **kwargs: object) -> object:
         _ = args, kwargs
-        raise RuntimeError("compile fail")
+        msg = "compile fail"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr("forecaster.backends.gpu_backend.torch.compile", _compile_fail)
     backend.load_model(state_path)
@@ -98,8 +119,9 @@ def test_gpu_backend_load_model_compile_fallback(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_gpu_backend_health_check_nvml_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Health check should fall back gracefully when NVML bindings are incomplete."""
     backend = CUDAForecaster()
     monkeypatch.setitem(sys.modules, "pynvml", ModuleType("pynvml"))
     # Missing required NVML attrs should drive fallback branch.
     health = backend.health_check()
-    assert "gpu_utilization" in health
+    _check("gpu_utilization" in health)

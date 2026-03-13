@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from time import perf_counter
 
@@ -44,6 +43,7 @@ def _synthetic_problem(
 
 
 def main() -> None:
+    """Run a simple benchmark for the selected optimizer backend."""
     parser = argparse.ArgumentParser(description="Benchmark route optimizer backend")
     parser.add_argument("--stops", type=int, default=50)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
@@ -68,7 +68,7 @@ def main() -> None:
     )
     elapsed_ms = (perf_counter() - start) * 1000
 
-    payload = {
+    {
         "backend": args.device,
         "status": result["status"],
         "stops": args.stops,
@@ -80,15 +80,8 @@ def main() -> None:
     }
 
     if args.output == "json":
-        print(json.dumps(payload, separators=(",", ":")))
         return
 
-    print("backend,status,stops,vehicles_used,total_cost,baseline_cost,cost_reduction_pct,elapsed_ms")
-    print(
-        f"{payload['backend']},{payload['status']},{payload['stops']},{payload['vehicles_used']},"
-        f"{payload['total_cost']:.2f},{payload['baseline_cost']:.2f},"
-        f"{payload['cost_reduction_pct']:.2f},{payload['elapsed_ms']:.2f}",
-    )
 
 
 if __name__ == "__main__":

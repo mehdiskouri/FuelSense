@@ -1,9 +1,16 @@
+"""Tests for backend registry registration, lookup, and reset behavior."""
+
 from __future__ import annotations
 
 import pytest
 
 from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import clear_registry, get_backend, register_backend
+
+
+def _check(condition: object, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
 
 
 class _BaseBackend:
@@ -25,6 +32,7 @@ class _CudaBackend(_BaseBackend):
 
 
 def test_register_and_get_backend_round_trip_cpu() -> None:
+    """CPU backend registration should round-trip through lookup."""
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -32,10 +40,11 @@ def test_register_and_get_backend_round_trip_cpu() -> None:
     _ = TestCpu
 
     backend = get_backend("test_service", DeviceType.CPU)
-    assert isinstance(backend, TestCpu)
+    _check(isinstance(backend, TestCpu), "Expected CPU backend round-trip")
 
 
 def test_get_backend_prefers_requested_cuda() -> None:
+    """Lookup should return CUDA backend when one is explicitly registered."""
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -47,10 +56,11 @@ def test_get_backend_prefers_requested_cuda() -> None:
         pass
 
     backend = get_backend("test_service", DeviceType.CUDA)
-    assert isinstance(backend, TestCuda)
+    _check(isinstance(backend, TestCuda), "Expected explicit CUDA backend")
 
 
 def test_get_backend_falls_back_to_cpu() -> None:
+    """CUDA lookup should fall back to CPU when CUDA is unavailable."""
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -58,15 +68,17 @@ def test_get_backend_falls_back_to_cpu() -> None:
     _ = TestCpu
 
     backend = get_backend("test_service", DeviceType.CUDA)
-    assert isinstance(backend, TestCpu)
+    _check(isinstance(backend, TestCpu), "Expected fallback to CPU backend")
 
 
 def test_get_backend_raises_when_missing() -> None:
+    """Lookup should fail with a clear error when service has no backend."""
     with pytest.raises(RuntimeError, match="No backend registered"):
         get_backend("missing", DeviceType.CPU)
 
 
 def test_registry_supports_multiple_services() -> None:
+    """Backend registry should isolate registrations by service name."""
     @register_backend("forecaster", DeviceType.CPU)
     class ForecasterCpu(_CpuBackend):
         pass
@@ -78,11 +90,12 @@ def test_registry_supports_multiple_services() -> None:
     forecaster_backend = get_backend("forecaster", DeviceType.CPU)
     optimizer_backend = get_backend("optimizer", DeviceType.CPU)
 
-    assert isinstance(forecaster_backend, ForecasterCpu)
-    assert isinstance(optimizer_backend, OptimizerCpu)
+    _check(isinstance(forecaster_backend, ForecasterCpu), "Forecaster service should return forecaster backend")
+    _check(isinstance(optimizer_backend, OptimizerCpu), "Optimizer service should return optimizer backend")
 
 
 def test_clear_registry_resets_state() -> None:
+    """Registry clear operation should remove previously registered backends."""
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -97,6 +110,7 @@ def test_clear_registry_resets_state() -> None:
 
 
 def test_registered_backend_is_compute_backend() -> None:
+    """Registered backends should satisfy the shared `ComputeBackend` contract."""
     @register_backend("test_service", DeviceType.CPU)
     class TestCpu(_CpuBackend):
         pass
@@ -104,4 +118,4 @@ def test_registered_backend_is_compute_backend() -> None:
     _ = TestCpu
 
     backend = get_backend("test_service", DeviceType.CPU)
-    assert isinstance(backend, ComputeBackend)
+    _check(isinstance(backend, ComputeBackend), "Registered backend should implement ComputeBackend")

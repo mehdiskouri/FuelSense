@@ -25,6 +25,8 @@ from fuelsense.synthetic.weather import generate_weather_series
 
 @dataclass
 class GenerationSummary:
+    """Counts of records created by one synthetic data generation run."""
+
     fuel_types: int
     depots: int
     facilities: int
@@ -34,7 +36,10 @@ class GenerationSummary:
 
 
 class SyntheticDataGenerator:
+    """Build synthetic depots, facilities, vehicles, and inventory history."""
+
     def __init__(self, facilities: int = 50, days: int = 365, seed: int = 42) -> None:
+        """Initialize generator parameters and deterministic random source."""
         self.facility_count = facilities
         self.days = days
         self.seed = seed
@@ -167,6 +172,7 @@ class SyntheticDataGenerator:
 
     @transaction.atomic
     def generate(self) -> GenerationSummary:
+        """Generate and persist a full synthetic dataset transactionally."""
         InventoryLog.objects.all().delete()
         DepotFacilityAssignment.objects.all().delete()
         Vehicle.objects.all().delete()
@@ -189,6 +195,7 @@ class SyntheticDataGenerator:
 
 
 def generate_synthetic_data(facilities: int, days: int, seed: int) -> dict[str, Any]:
+    """Generate synthetic FuelSense records and return a creation summary."""
     summary = SyntheticDataGenerator(facilities=facilities, days=days, seed=seed).generate()
     return {
         "fuel_types": summary.fuel_types,
