@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib import import_module
 from time import perf_counter
-from typing import Any, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from fastapi import FastAPI, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
@@ -14,7 +14,9 @@ from starlette.responses import Response
 from fuelsense_common.compute import ComputeBackend, DeviceType, resolve_device
 from fuelsense_common.registry import get_backend
 from fuelsense_common.schemas import HealthResponse, OptimizeRequest, OptimizeResponse
-import optimizer.backends  # noqa: F401
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 SOLVER_TIME = Histogram(
     "optimizer_solver_time_ms",
@@ -33,20 +35,31 @@ VEHICLES_USED = Histogram(
 )
 DEVICE_INFO = Gauge("optimizer_device_gpu", "1 if CUDA is active, 0 for CPU")
 
-backend: ComputeBackend | None = None
-device_type: DeviceType = DeviceType.CPU
+
+class _RuntimeState:
+    def __init__(self) -> None:
+        self.backend: ComputeBackend | None = None
+        self.device_type: DeviceType = DeviceType.CPU
+
+
+RUNTIME_STATE = _RuntimeState()
+
+
+class _SolverBackend(Protocol):
+    def solve(self, **kwargs: object) -> dict[str, object]: ...
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    global backend, device_type
-    device_type = resolve_device()
-    DEVICE_INFO.set(1 if device_type == DeviceType.CUDA else 0)
+    """Resolve optimizer backend and warm it during application startup."""
+    RUNTIME_STATE.device_type = resolve_device()
+    DEVICE_INFO.set(1 if RUNTIME_STATE.device_type == DeviceType.CUDA else 0)
     try:
-        backend = get_backend("route_optimizer", device_type)
-        backend.warmup()
+        _ = import_module("optimizer.backends")
+        RUNTIME_STATE.backend = get_backend("route_optimizer", RUNTIME_STATE.device_type)
+        RUNTIME_STATE.backend.warmup()
     except RuntimeError:
-        backend = None
+        RUNTIME_STATE.backend = None
     yield
 
 
@@ -55,11 +68,13 @@ app = FastAPI(title="FuelSense Optimizer", version="0.2.0", lifespan=lifespan)
 
 @app.post("/optimize", response_model=OptimizeResponse)
 def optimize(request: OptimizeRequest) -> OptimizeResponse:
-    if backend is None or not hasattr(backend, "solve"):
+    """Run route optimization for one depot payload and return normalized response."""
+    if RUNTIME_STATE.backend is None or not hasattr(RUNTIME_STATE.backend, "solve"):
         raise HTTPException(status_code=503, detail="Optimizer backend unavailable")
 
     start = perf_counter()
-    result = cast(Any, backend).solve(
+    solver_backend = cast("_SolverBackend", RUNTIME_STATE.backend)
+    result = solver_backend.solve(
         depot_lat=request.depot_lat,
         depot_lng=request.depot_lng,
         vehicles=[v.model_dump() for v in request.vehicles],
@@ -78,14 +93,19 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    if backend is None:
-        return HealthResponse(status="degraded", device={"device": device_type.value, "backend_loaded": False})
-    details = cast(dict[str, object], backend.health_check())
-    details.setdefault("device", device_type.value)
+    """Report optimizer backend availability and backend-specific health fields."""
+    if RUNTIME_STATE.backend is None:
+        return HealthResponse(
+            status="degraded",
+            device={"device": RUNTIME_STATE.device_type.value, "backend_loaded": False},
+        )
+    details = RUNTIME_STATE.backend.health_check()
+    details.setdefault("device", RUNTIME_STATE.device_type.value)
     details["backend_loaded"] = True
     return HealthResponse(status="ok", device=details)
 
 
 @app.get("/metrics")
 def metrics() -> Response:
+    """Expose Prometheus metrics for optimizer service runtime and solver behavior."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

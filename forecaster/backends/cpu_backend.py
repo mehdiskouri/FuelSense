@@ -5,25 +5,30 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
 from torch import Tensor
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from forecaster.model import DemandTCN, QuantileLoss
 from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import register_backend
 
+TARGET_MATRIX_NDIMS = 2
+
 
 @register_backend("demand_forecaster", DeviceType.CPU)
 class CPUForecaster(ComputeBackend):
+    """CPU implementation of the demand forecaster backend contract."""
+
     device = DeviceType.CPU
 
     def __init__(self) -> None:
+        """Configure CPU threading, initialize model, and prepare training defaults."""
         cpu_count = max(os.cpu_count() or 1, 1)
         default_threads = cpu_count
         threads = max(int(os.environ.get("FUELSENSE_FORECAST_CPU_THREADS", str(default_threads))), 1)
@@ -36,20 +41,23 @@ class CPUForecaster(ComputeBackend):
         self.loss_fn = QuantileLoss()
 
     def warmup(self) -> None:
+        """Run a lightweight forward pass to initialize model execution paths."""
         with torch.no_grad():
             dummy = torch.zeros((1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32)
             if self.model is not None:
                 _ = self.model(dummy)
 
     def health_check(self) -> dict[str, object]:
+        """Return runtime health details for the CPU forecaster backend."""
         return {
             "device": self.device.value,
             "threads": torch.get_num_threads(),
-            "mkl_available": bool(torch.backends.mkl.is_available()),
+            "mkl_available": bool(cast("Any", torch.backends.mkl).is_available()),
             "model_loaded": bool(self.model is not None),
         }
 
     def load_model(self, state_dict_path: str | Path) -> None:
+        """Load serialized model weights and warm backend for inference."""
         payload = torch.load(Path(state_dict_path), map_location="cpu")
         if self.model is None:
             self.model = DemandTCN()
@@ -58,14 +66,75 @@ class CPUForecaster(ComputeBackend):
         self.warmup()
 
     def predict(self, lookback: np.ndarray) -> np.ndarray:
+        """Generate quantile demand forecasts for a lookback feature tensor."""
         x = torch.as_tensor(lookback, dtype=torch.float32)
         if self.model is None:
-            raise RuntimeError("Model is not initialized")
+            msg = "Model is not initialized"
+            raise RuntimeError(msg)
         with torch.no_grad():
             preds = self.model(x)
-        return preds.detach().cpu().numpy()
+        return cast("np.ndarray", preds.detach().cpu().numpy())
 
-    def train(
+    @staticmethod
+    def _expand_targets(raw: Tensor) -> Tensor:
+        if raw.ndim == 1:
+            return raw.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+        if raw.ndim == TARGET_MATRIX_NDIMS and raw.shape[1] == DemandTCN.HORIZON:
+            return raw
+        msg = "targets must have shape [N] or [N, HORIZON]"
+        raise ValueError(msg)
+
+    def _build_train_loader(
+        self,
+        train_x: Tensor,
+        train_y: Tensor,
+        batch_size: int,
+    ) -> DataLoader[tuple[Tensor, Tensor]]:
+        train_ds = cast("Dataset[tuple[Tensor, Tensor]]", TensorDataset(train_x, train_y))
+        return DataLoader(
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=max(self.train_num_workers, 0),
+            persistent_workers=self.train_num_workers > 0,
+        )
+
+    def _run_train_epoch(
+        self,
+        model: DemandTCN,
+        train_loader: DataLoader[tuple[Tensor, Tensor]],
+        optimizer: AdamW,
+    ) -> list[float]:
+        model.train()
+        train_losses: list[float] = []
+        for batch_x, batch_y in train_loader:
+            optimizer.zero_grad(set_to_none=True)
+            preds = model(batch_x)
+            target = self._expand_targets(batch_y)
+            loss = self.loss_fn(preds, target)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            train_losses.append(float(loss.detach().cpu().item()))
+        return train_losses
+
+    def _compute_validation_loss(self, model: DemandTCN, val_x: Tensor, val_y: Tensor) -> float:
+        model.eval()
+        with torch.no_grad():
+            val_preds = model(val_x)
+            val_target = self._expand_targets(val_y)
+            return float(self.loss_fn(val_preds, val_target).detach().cpu().item())
+
+    def _compute_rmse(self, model: DemandTCN, x: Tensor, y: Tensor) -> float:
+        if x.shape[0] == 0:
+            return 0.0
+        with torch.no_grad():
+            pred = model(x)
+            pred_p50 = pred[:, :, 1]
+            target = self._expand_targets(y)
+            return float(torch.sqrt(torch.mean((pred_p50 - target) ** 2)).item())
+
+    def train(  # noqa: PLR0913
         self,
         train_data: np.ndarray,
         train_targets: np.ndarray,
@@ -77,31 +146,16 @@ class CPUForecaster(ComputeBackend):
         weight_decay: float = 1e-4,
         patience: int = 10,
     ) -> dict[str, Any]:
-        def _expand_targets(raw: Tensor) -> Tensor:
-            if raw.ndim == 1:
-                return raw.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
-            if raw.ndim == 2 and raw.shape[1] == DemandTCN.HORIZON:
-                return raw
-            raise ValueError("targets must have shape [N] or [N, HORIZON]")
-
+        """Train demand model on CPU and return metrics plus serialized best state."""
         model = DemandTCN()
         optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        optimizer_any: Any = optimizer
         scheduler = CosineAnnealingLR(optimizer, T_max=max(epochs, 1))
 
         train_x = torch.as_tensor(train_data, dtype=torch.float32)
         train_y = torch.as_tensor(train_targets, dtype=torch.float32)
         val_x = torch.as_tensor(val_data, dtype=torch.float32)
         val_y = torch.as_tensor(val_targets, dtype=torch.float32)
-
-        train_ds = TensorDataset(train_x, train_y)
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=max(self.train_num_workers, 0),
-            persistent_workers=self.train_num_workers > 0,
-        )
+        train_loader = self._build_train_loader(train_x, train_y, batch_size)
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
         best_val = float("inf")
@@ -109,23 +163,8 @@ class CPUForecaster(ComputeBackend):
         stale_epochs = 0
 
         for _epoch in range(epochs):
-            model.train()
-            train_losses: list[float] = []
-            for batch_x, batch_y in train_loader:
-                optimizer.zero_grad(set_to_none=True)
-                preds = model(batch_x)
-                target = _expand_targets(batch_y)
-                loss = self.loss_fn(preds, target)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer_any.step()
-                train_losses.append(float(loss.detach().cpu().item()))
-
-            model.eval()
-            with torch.no_grad():
-                val_preds = model(val_x)
-                val_target = _expand_targets(val_y)
-                val_loss = float(self.loss_fn(val_preds, val_target).detach().cpu().item())
+            train_losses = self._run_train_epoch(model, train_loader, optimizer)
+            val_loss = self._compute_validation_loss(model, val_x, val_y)
 
             epoch_train = float(np.mean(train_losses)) if train_losses else val_loss
             history["train_loss"].append(epoch_train)
@@ -153,16 +192,10 @@ class CPUForecaster(ComputeBackend):
             pred = self.model(val_x)
             inference_ms = (perf_counter() - start) * 1000
             pred_p50 = pred[:, :, 1]
-            val_target = _expand_targets(val_y)
+            val_target = self._expand_targets(val_y)
             rmse = float(torch.sqrt(torch.mean((pred_p50 - val_target) ** 2)).item())
 
-        train_rmse = 0.0
-        if train_x.shape[0] > 0:
-            with torch.no_grad():
-                train_pred = self.model(train_x)
-                train_p50 = train_pred[:, :, 1]
-                train_target = _expand_targets(train_y)
-                train_rmse = float(torch.sqrt(torch.mean((train_p50 - train_target) ** 2)).item())
+        train_rmse = self._compute_rmse(self.model, train_x, train_y)
 
         return {
             "history": history,

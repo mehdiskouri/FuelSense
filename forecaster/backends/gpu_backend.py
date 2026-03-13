@@ -4,63 +4,96 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
+from contextlib import AbstractContextManager, suppress
+from importlib import import_module
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from forecaster.model import DemandTCN, QuantileLoss
 from fuelsense_common.compute import ComputeBackend, DeviceType
 from fuelsense_common.registry import register_backend
 
-
 logger = logging.getLogger(__name__)
 
+TARGET_MATRIX_NDIMS = 2
 
-def _cuda_autocast() -> Any:
-    torch_amp: Any = getattr(torch, "amp", None)
+if TYPE_CHECKING:
+    from types import ModuleType
+
+
+def _get_pynvml() -> ModuleType | None:
+    try:
+        module = import_module("pynvml")
+    except ImportError:  # pragma: no cover - optional GPU telemetry dependency
+        return None
+    return module
+
+
+class _GradScalerLike(Protocol):
+    def scale(self, loss: Tensor) -> _ScaledLossLike: ...
+
+    def unscale_(self, optimizer: AdamW) -> None: ...
+
+    def step(self, optimizer: AdamW) -> None: ...
+
+    def update(self) -> None: ...
+
+
+class _ScaledLossLike(Protocol):
+    def backward(self) -> None: ...
+
+
+def _cuda_autocast() -> AbstractContextManager[object]:
+    torch_amp = getattr(torch, "amp", None)
     if torch_amp is not None:
-        amp_autocast: Any = getattr(torch_amp, "autocast", None)
-        if amp_autocast is not None:
-            return amp_autocast(device_type="cuda", enabled=True)
-    torch_autocast: Any = getattr(torch, "autocast", None)
-    if torch_autocast is not None:
-        return torch_autocast(device_type="cuda", enabled=True)
-    return torch.cuda.amp.autocast(enabled=True)
+        amp_autocast = getattr(torch_amp, "autocast", None)
+        if callable(amp_autocast):
+            return cast("AbstractContextManager[object]", amp_autocast(device_type="cuda", enabled=True))
+    torch_autocast = getattr(torch, "autocast", None)
+    if callable(torch_autocast):
+        return cast("AbstractContextManager[object]", torch_autocast(device_type="cuda", enabled=True))
+    return cast("AbstractContextManager[object]", torch.cuda.amp.autocast(enabled=True))
 
 
-def _cuda_grad_scaler() -> Any:
-    torch_amp: Any = getattr(torch, "amp", None)
+def _cuda_grad_scaler() -> _GradScalerLike:
+    torch_amp = getattr(torch, "amp", None)
     if torch_amp is not None:
-        amp_grad_scaler_ctor: Any = getattr(torch_amp, "GradScaler", None)
-        if amp_grad_scaler_ctor is not None:
-            return amp_grad_scaler_ctor("cuda", enabled=True)
-    grad_scaler_ctor: Any = getattr(torch, "GradScaler", None)
-    if grad_scaler_ctor is not None:
-        return grad_scaler_ctor(enabled=True)
-    return torch.cuda.amp.GradScaler(enabled=True)
+        amp_grad_scaler_ctor = getattr(torch_amp, "GradScaler", None)
+        if callable(amp_grad_scaler_ctor):
+            return cast("_GradScalerLike", amp_grad_scaler_ctor("cuda", enabled=True))
+    grad_scaler_ctor = getattr(torch, "GradScaler", None)
+    if callable(grad_scaler_ctor):
+        return cast("_GradScalerLike", grad_scaler_ctor(enabled=True))
+    return cast("_GradScalerLike", torch.cuda.amp.GradScaler(enabled=True))
 
 
 @register_backend("demand_forecaster", DeviceType.CUDA)
 class CUDAForecaster(ComputeBackend):
+    """GPU-accelerated demand forecaster based on the DemandTCN architecture."""
+
     device = DeviceType.CUDA
 
     def __init__(self) -> None:
+        """Initialize CUDA resources, model instance, and training configuration."""
         if not torch.cuda.is_available():
-            raise RuntimeError("CUDA backend requested but CUDA is not available")
+            msg = "CUDA backend requested but CUDA is not available"
+            raise RuntimeError(msg)
 
         self.cuda_device = torch.device("cuda:0")
-        self.stream = torch.cuda.Stream(device=self.cuda_device)
+        stream_ctor = cast("Any", torch.cuda.Stream)
+        self.stream = cast("torch.cuda.Stream", stream_ctor(device=self.cuda_device))
         self.train_num_workers = int(
-            os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0))))
+            os.environ.get("FUELSENSE_FORECAST_GPU_WORKERS", str(min(4, max((os.cpu_count() or 1) // 2, 0)))),
         )
 
         torch.backends.cudnn.benchmark = True
@@ -68,27 +101,28 @@ class CUDAForecaster(ComputeBackend):
         torch.backends.cudnn.allow_tf32 = True
 
         mem_fraction = float(os.environ.get("FUELSENSE_CUDA_MEMORY_FRACTION", "0.8"))
-        try:
-            cuda_set_mem_fraction: Any = torch.cuda.set_per_process_memory_fraction
-            cuda_set_mem_fraction(mem_fraction, device=self.cuda_device)
-        except RuntimeError:
-            pass
+        with suppress(RuntimeError):
+            torch.cuda.set_per_process_memory_fraction(mem_fraction, device=self.cuda_device)
 
         self.model: nn.Module | None = DemandTCN().to(self.cuda_device)
         self.model.eval()
         self.loss_fn = QuantileLoss().to(self.cuda_device)
 
     def warmup(self) -> None:
+        """Run a one-shot forward pass to initialize CUDA kernels and memory paths."""
         if self.model is None:
             return
         with torch.no_grad(), _cuda_autocast():
             dummy = torch.zeros(
-                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES), dtype=torch.float32, device=self.cuda_device
+                (1, DemandTCN.LOOKBACK, DemandTCN.N_FEATURES),
+                dtype=torch.float32,
+                device=self.cuda_device,
             )
             _ = self.model(dummy)
         torch.cuda.synchronize(self.cuda_device)
 
     def health_check(self) -> dict[str, object]:
+        """Return CUDA device health and optional runtime utilization details."""
         mem_free, mem_total = torch.cuda.mem_get_info(device=self.cuda_device)
         details: dict[str, object] = {
             "device": self.device.value,
@@ -101,20 +135,22 @@ class CUDAForecaster(ComputeBackend):
         }
 
         try:
-            import pynvml
-
-            nvml: Any = pynvml
-            nvml.nvmlInit()
-            handle = nvml.nvmlDeviceGetHandleByIndex(0)
-            util = nvml.nvmlDeviceGetUtilizationRates(handle)
-            details["gpu_utilization"] = int(util.gpu)
-            nvml.nvmlShutdown()
-        except Exception:
+            pynvml = _get_pynvml()
+            if pynvml is None:
+                details["gpu_utilization"] = None
+            else:
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                details["gpu_utilization"] = int(util.gpu)
+                pynvml.nvmlShutdown()
+        except (AttributeError, RuntimeError, OSError, TypeError, ValueError):
             details["gpu_utilization"] = None
 
         return details
 
     def load_model(self, state_dict_path: str | Path) -> None:
+        """Load model weights, apply optional compilation, and warm up the backend."""
         if self.model is None:
             self.model = DemandTCN().to(self.cuda_device)
 
@@ -123,16 +159,17 @@ class CUDAForecaster(ComputeBackend):
         self.model.eval()
 
         try:
-            torch_compile: Any = torch.compile
-            self.model = torch_compile(self.model, mode="reduce-overhead")
-        except Exception as exc:  # pragma: no cover - depends on torch/cuda runtime capabilities
+            self.model = cast("nn.Module", torch.compile(self.model, mode="reduce-overhead"))
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
             logger.debug("torch.compile unavailable for CUDA forecaster model: %s", exc)
 
         self.warmup()
 
     def predict(self, lookback: np.ndarray) -> np.ndarray:
+        """Run a CUDA forward pass for a lookback batch and return CPU numpy predictions."""
         if self.model is None:
-            raise RuntimeError("Model is not initialized")
+            msg = "Model is not initialized"
+            raise RuntimeError(msg)
 
         np_in = np.asarray(lookback, dtype=np.float32)
         cpu_tensor = torch.from_numpy(np_in)
@@ -144,9 +181,91 @@ class CUDAForecaster(ComputeBackend):
             gpu_tensor = cpu_tensor.to(self.cuda_device, non_blocking=True)
             preds = self.model(gpu_tensor)
             preds_cpu = preds.detach().cpu()
-        return preds_cpu.numpy()
+        return cast("np.ndarray", preds_cpu.numpy())
 
-    def train(
+    @staticmethod
+    def _expand_targets(raw: Tensor) -> Tensor:
+        if raw.ndim == 1:
+            return raw.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
+        if raw.ndim == TARGET_MATRIX_NDIMS and raw.shape[1] == DemandTCN.HORIZON:
+            return raw
+        msg = "targets must have shape [N] or [N, HORIZON]"
+        raise ValueError(msg)
+
+    def _build_train_loader(
+        self,
+        train_x: Tensor,
+        train_y: Tensor,
+        batch_size: int,
+    ) -> DataLoader[tuple[Tensor, Tensor]]:
+        train_ds = cast("Dataset[tuple[Tensor, Tensor]]", TensorDataset(train_x, train_y))
+        return DataLoader(
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            pin_memory=True,
+            num_workers=max(self.train_num_workers, 0),
+            persistent_workers=self.train_num_workers > 0,
+        )
+
+    def _run_train_epoch(
+        self,
+        model: DemandTCN,
+        train_loader: DataLoader[tuple[Tensor, Tensor]],
+        optimizer: AdamW,
+        scaler: _GradScalerLike,
+    ) -> list[float]:
+        model.train()
+        train_losses: list[float] = []
+        for batch_x_cpu, batch_y_cpu in train_loader:
+            batch_x = batch_x_cpu.to(self.cuda_device, non_blocking=True)
+            batch_y = batch_y_cpu.to(self.cuda_device, non_blocking=True)
+
+            optimizer.zero_grad(set_to_none=True)
+            with _cuda_autocast():
+                preds = model(batch_x)
+                target = self._expand_targets(batch_y)
+                loss = self.loss_fn(preds, target)
+
+            scaled_loss = scaler.scale(loss)
+            scaled_loss.backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            train_losses.append(float(loss.detach().cpu().item()))
+        return train_losses
+
+    def _compute_validation_loss(self, model: DemandTCN, val_x: Tensor, val_y: Tensor) -> float:
+        model.eval()
+        with torch.no_grad(), _cuda_autocast():
+            val_preds = model(val_x)
+            val_target = self._expand_targets(val_y)
+            return float(self.loss_fn(val_preds, val_target).detach().cpu().item())
+
+    def _compute_rmse_with_timing(self, model: nn.Module, val_x: Tensor, val_y: Tensor) -> tuple[float, float]:
+        with torch.no_grad(), _cuda_autocast():
+            start = perf_counter()
+            pred = model(val_x)
+            torch.cuda.synchronize(self.cuda_device)
+            inference_ms = (perf_counter() - start) * 1000
+            pred_p50 = pred[:, :, 1]
+            val_target = self._expand_targets(val_y)
+            rmse = float(torch.sqrt(torch.mean((pred_p50 - val_target) ** 2)).detach().cpu().item())
+        return rmse, inference_ms
+
+    def _compute_train_rmse(self, model: nn.Module, train_x: Tensor, train_y: Tensor) -> float:
+        if train_x.shape[0] == 0:
+            return 0.0
+        with torch.no_grad(), _cuda_autocast():
+            full_train_x = train_x.to(self.cuda_device, non_blocking=True)
+            full_train_y = train_y.to(self.cuda_device, non_blocking=True)
+            train_pred = model(full_train_x)
+            train_p50 = train_pred[:, :, 1]
+            train_target = self._expand_targets(full_train_y)
+            return float(torch.sqrt(torch.mean((train_p50 - train_target) ** 2)).detach().cpu().item())
+
+    def train(  # noqa: PLR0913
         self,
         train_data: np.ndarray,
         train_targets: np.ndarray,
@@ -158,16 +277,9 @@ class CUDAForecaster(ComputeBackend):
         weight_decay: float = 1e-4,
         patience: int = 10,
     ) -> dict[str, Any]:
-        def _expand_targets(raw: Tensor) -> Tensor:
-            if raw.ndim == 1:
-                return raw.unsqueeze(1).repeat(1, DemandTCN.HORIZON)
-            if raw.ndim == 2 and raw.shape[1] == DemandTCN.HORIZON:
-                return raw
-            raise ValueError("targets must have shape [N] or [N, HORIZON]")
-
+        """Train a DemandTCN model on CUDA and return metrics with model artifacts."""
         model = DemandTCN().to(self.cuda_device)
         optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        optimizer_any: Any = optimizer
         scheduler = CosineAnnealingLR(optimizer, T_max=max(epochs, 1))
         scaler = _cuda_grad_scaler()
 
@@ -175,16 +287,7 @@ class CUDAForecaster(ComputeBackend):
         train_y = torch.as_tensor(train_targets, dtype=torch.float32)
         val_x = torch.as_tensor(val_data, dtype=torch.float32, device=self.cuda_device)
         val_y = torch.as_tensor(val_targets, dtype=torch.float32, device=self.cuda_device)
-
-        train_ds = TensorDataset(train_x, train_y)
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=batch_size,
-            shuffle=True,
-            pin_memory=True,
-            num_workers=max(self.train_num_workers, 0),
-            persistent_workers=self.train_num_workers > 0,
-        )
+        train_loader = self._build_train_loader(train_x, train_y, batch_size)
 
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
         best_val = float("inf")
@@ -192,31 +295,8 @@ class CUDAForecaster(ComputeBackend):
         stale_epochs = 0
 
         for _epoch in range(epochs):
-            model.train()
-            train_losses: list[float] = []
-            for batch_x, batch_y in train_loader:
-                batch_x = batch_x.to(self.cuda_device, non_blocking=True)
-                batch_y = batch_y.to(self.cuda_device, non_blocking=True)
-
-                optimizer_any.zero_grad(set_to_none=True)
-                with _cuda_autocast():
-                    preds = model(batch_x)
-                    target = _expand_targets(batch_y)
-                    loss = self.loss_fn(preds, target)
-
-                scaled_loss: Any = scaler.scale(loss)
-                scaled_loss.backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
-                train_losses.append(float(loss.detach().cpu().item()))
-
-            model.eval()
-            with torch.no_grad(), _cuda_autocast():
-                val_preds = model(val_x)
-                val_target = _expand_targets(val_y)
-                val_loss = float(self.loss_fn(val_preds, val_target).detach().cpu().item())
+            train_losses = self._run_train_epoch(model, train_loader, optimizer, scaler)
+            val_loss = self._compute_validation_loss(model, val_x, val_y)
 
             epoch_train = float(np.mean(train_losses)) if train_losses else val_loss
             history["train_loss"].append(epoch_train)
@@ -240,24 +320,8 @@ class CUDAForecaster(ComputeBackend):
         self.model = model
         self.model.eval()
 
-        with torch.no_grad(), _cuda_autocast():
-            start = perf_counter()
-            pred = self.model(val_x)
-            torch.cuda.synchronize(self.cuda_device)
-            inference_ms = (perf_counter() - start) * 1000
-            pred_p50 = pred[:, :, 1]
-            val_target = _expand_targets(val_y)
-            rmse = float(torch.sqrt(torch.mean((pred_p50 - val_target) ** 2)).detach().cpu().item())
-
-        train_rmse = 0.0
-        if train_x.shape[0] > 0:
-            with torch.no_grad(), _cuda_autocast():
-                full_train_x = train_x.to(self.cuda_device, non_blocking=True)
-                full_train_y = train_y.to(self.cuda_device, non_blocking=True)
-                train_pred = self.model(full_train_x)
-                train_p50 = train_pred[:, :, 1]
-                train_target = _expand_targets(full_train_y)
-                train_rmse = float(torch.sqrt(torch.mean((train_p50 - train_target) ** 2)).detach().cpu().item())
+        rmse, inference_ms = self._compute_rmse_with_timing(self.model, val_x, val_y)
+        train_rmse = self._compute_train_rmse(self.model, train_x, train_y)
 
         return {
             "history": history,

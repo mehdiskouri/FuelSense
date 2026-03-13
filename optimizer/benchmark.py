@@ -6,16 +6,39 @@ import argparse
 import json
 import os
 from time import perf_counter
+from typing import Protocol, cast
 
 import numpy as np
 
+import optimizer.backends  # noqa: F401
 from fuelsense_common.compute import DeviceType
 from fuelsense_common.registry import get_backend
-import optimizer.backends  # noqa: F401
+
+
+class _RouteOptimizerBackend(Protocol):
+    def warmup(self) -> None: ...
+
+    def solve(  # noqa: PLR0913
+        self,
+        depot_lat: float,
+        depot_lng: float,
+        vehicles: list[dict[str, float]],
+        stops: list[dict[str, float | int]],
+        distance_matrix: list[list[float]],
+        max_route_duration: int,
+    ) -> dict[str, object]: ...
+
+
+def _result_float(result: dict[str, object], key: str) -> float:
+    value = result.get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
 
 
 def _synthetic_problem(
-    stops: int, seed: int = 42
+    stops: int,
+    seed: int = 42,
 ) -> tuple[list[dict[str, float]], list[dict[str, float | int]], list[list[float]]]:
     rng = np.random.default_rng(seed)
     coords = rng.uniform(0.0, 100.0, size=(stops + 1, 2)).astype(np.float32)
@@ -38,12 +61,13 @@ def _synthetic_problem(
                 "time_window_start": start_min,
                 "time_window_end": end_min,
                 "service_time": 30,
-            }
+            },
         )
     return vehicles, stop_list, matrix.tolist()
 
 
 def main() -> None:
+    """Run a simple benchmark for the selected optimizer backend."""
     parser = argparse.ArgumentParser(description="Benchmark route optimizer backend")
     parser.add_argument("--stops", type=int, default=50)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
@@ -54,7 +78,7 @@ def main() -> None:
     device = DeviceType.CUDA if args.device == "cuda" else DeviceType.CPU
 
     vehicles, stops, distance_matrix = _synthetic_problem(args.stops)
-    backend = get_backend("route_optimizer", device)
+    backend = cast("_RouteOptimizerBackend", get_backend("route_optimizer", device))
     backend.warmup()
 
     start = perf_counter()
@@ -73,21 +97,19 @@ def main() -> None:
         "status": result["status"],
         "stops": args.stops,
         "vehicles_used": result["vehicles_used"],
-        "total_cost": round(float(result["total_cost"]), 2),
-        "baseline_cost": round(float(result["baseline_cost"]), 2),
-        "cost_reduction_pct": round(float(result["cost_reduction_pct"]), 2),
+        "total_cost": round(_result_float(result, "total_cost"), 2),
+        "baseline_cost": round(_result_float(result, "baseline_cost"), 2),
+        "cost_reduction_pct": round(_result_float(result, "cost_reduction_pct"), 2),
         "elapsed_ms": round(elapsed_ms, 2),
     }
 
     if args.output == "json":
-        print(json.dumps(payload, separators=(",", ":")))
+        print(json.dumps(payload))  # noqa: T201
         return
-
-    print("backend,status,stops,vehicles_used,total_cost,baseline_cost,cost_reduction_pct,elapsed_ms")
-    print(
+    print("backend,status,stops,vehicles_used,total_cost,baseline_cost,cost_reduction_pct,elapsed_ms")  # noqa: T201
+    print(  # noqa: T201
         f"{payload['backend']},{payload['status']},{payload['stops']},{payload['vehicles_used']},"
-        f"{payload['total_cost']:.2f},{payload['baseline_cost']:.2f},"
-        f"{payload['cost_reduction_pct']:.2f},{payload['elapsed_ms']:.2f}"
+        f"{payload['total_cost']},{payload['baseline_cost']},{payload['cost_reduction_pct']},{payload['elapsed_ms']}",
     )
 
 

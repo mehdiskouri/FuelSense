@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from django.utils import timezone
 
 from fuelsense.core.models import DeliveryItem, Facility, Forecast, InventoryLog, ModelRegistry
+
+MIN_ANOMALY_FEATURE_LOGS = 2
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 @dataclass(frozen=True)
@@ -23,11 +27,11 @@ class _SeriesRow:
     solar_irradiance: float
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
+def _safe_float(value: object, default: float = 0.0) -> float:
     if value is None:
         return default
     try:
-        return float(value)
+        return float(cast("Any", value))
     except (TypeError, ValueError):
         return default
 
@@ -49,7 +53,7 @@ def _forward_fill(rows: list[_SeriesRow]) -> list[_SeriesRow]:
                 temperature=temp,
                 wind_speed=wind,
                 solar_irradiance=solar,
-            )
+            ),
         )
     return out
 
@@ -71,7 +75,7 @@ def _inventory_series_for_facility(facility_id: int) -> list[_SeriesRow]:
     logs = list(
         InventoryLog.objects.filter(facility_id=facility_id)
         .order_by("timestamp")
-        .values("timestamp", "consumption", "temperature", "wind_speed", "solar_irradiance")
+        .values("timestamp", "consumption", "temperature", "wind_speed", "solar_irradiance"),
     )
     rows = [
         _SeriesRow(
@@ -151,7 +155,7 @@ def extract_training_data(facility_id: int | None) -> dict[str, np.ndarray]:
     """
     if facility_id is None:
         facility_ids = list(
-            InventoryLog.objects.order_by("facility_id").values_list("facility_id", flat=True).distinct()
+            InventoryLog.objects.order_by("facility_id").values_list("facility_id", flat=True).distinct(),
         )
     else:
         facility_ids = [facility_id]
@@ -203,13 +207,13 @@ def extract_training_data(facility_id: int | None) -> dict[str, np.ndarray]:
     }
 
 
-def _extract_prediction_series(predictions_json: Any) -> list[float]:
+def _extract_prediction_series(predictions_json: object) -> list[float]:
     if not isinstance(predictions_json, list):
         return []
-    items = cast(list[object], predictions_json)
+    items = cast("list[object]", predictions_json)
     out: list[float] = []
     for raw_item in items:
-        item = cast(dict[str, Any], raw_item) if isinstance(raw_item, dict) else None
+        item = cast("dict[str, object]", raw_item) if isinstance(raw_item, dict) else None
         if not isinstance(item, dict):
             continue
         if "p50" in item:
@@ -230,8 +234,8 @@ def build_drift_data() -> list[dict[str, Any]]:
     ).select_related("facility")
 
     for model in active_models:
-        model_facility_id = cast(int | None, getattr(model, "facility_id", None))
-        baseline_rmse = cast(float | None, getattr(model, "validation_rmse", None))
+        model_facility_id = cast("int | None", getattr(model, "facility_id", None))
+        baseline_rmse = cast("float | None", getattr(model, "validation_rmse", None))
 
         if model_facility_id is None:
             continue
@@ -239,7 +243,7 @@ def build_drift_data() -> list[dict[str, Any]]:
         recent_actuals = list(
             InventoryLog.objects.filter(facility_id=model_facility_id, timestamp__gte=recent_window_start)
             .order_by("timestamp")
-            .values_list("consumption", flat=True)
+            .values_list("consumption", flat=True),
         )
 
         latest_forecast = (
@@ -250,28 +254,34 @@ def build_drift_data() -> list[dict[str, Any]]:
         )
         recent_predictions = _extract_prediction_series(getattr(latest_forecast, "predictions_json", []))
 
+        model_pk = getattr(model, "pk", None)
+        if model_pk is None:
+            continue
+
         payloads.append(
             {
                 "facility_id": int(model_facility_id),
-                "model_registry_id": int(cast(int, model.pk)),
+                "model_registry_id": int(model_pk),
                 "baseline_rmse": _safe_float(baseline_rmse),
                 "recent_actuals": [float(x) for x in recent_actuals],
                 "recent_predictions": recent_predictions,
-            }
+            },
         )
 
     return payloads
 
 
 def active_facility_ids() -> list[int]:
+    """Return ids for all active facilities."""
     return list(Facility.objects.filter(is_active=True).values_list("id", flat=True))
 
 
 def build_anomaly_features(facility_id: int) -> dict[str, float] | None:
+    """Build near-real-time anomaly features from recent facility telemetry."""
     now = timezone.now()
     logs_qs = InventoryLog.objects.filter(facility_id=facility_id).order_by("-timestamp")
     recent_logs = list(logs_qs[:7].values("timestamp", "consumption", "temperature", "inventory_level"))
-    if len(recent_logs) < 2:
+    if len(recent_logs) < MIN_ANOMALY_FEATURE_LOGS:
         return None
 
     latest_log = recent_logs[0]
@@ -320,10 +330,7 @@ def build_anomaly_features(facility_id: int) -> dict[str, float] | None:
         hours_since_delivery = 9999.0
     else:
         arrival = latest_delivery_item.get("actual_arrival") or latest_delivery_item.get("planned_arrival")
-        if arrival is None:
-            hours_since_delivery = 9999.0
-        else:
-            hours_since_delivery = max((now - arrival).total_seconds() / 3600.0, 0.0)
+        hours_since_delivery = 9999.0 if arrival is None else max((now - arrival).total_seconds() / 3600.0, 0.0)
 
     facility_row = Facility.objects.filter(id=facility_id).values("storage_capacity", "current_inventory").first()
     if facility_row is None:

@@ -1,3 +1,5 @@
+"""Tests for anomaly injector event triggering behavior."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -5,9 +7,18 @@ import numpy as np
 from fuelsense.synthetic.anomalies import AnomalyInjector
 
 
-def test_anomaly_injector_emits_event_with_high_probability():
+def _check(condition: object, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def test_anomaly_injector_emits_event_with_high_probability() -> None:
+    """High trigger probability should create an anomaly event."""
     rng = np.random.default_rng(42)
     injector = AnomalyInjector(trigger_probability=1.0)
     _, event = injector.apply("f1", day=0, consumption=100, base_load=100, rng=rng)
-    assert event is not None
-    assert event.anomaly_type in injector.anomaly_types
+    _check(event is not None, "High trigger probability should emit an anomaly event")
+    if event is None:
+        msg = "Expected anomaly event"
+        raise AssertionError(msg)
+    _check(event.anomaly_type in injector.anomaly_types, "Event type should be from configured anomaly types")

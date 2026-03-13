@@ -1,12 +1,19 @@
+"""Add lifecycle status fields and indexes to planning cycles."""
+
+from collections.abc import Sequence
+from typing import Any, ClassVar
+
 from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [
+    """Extend planning cycle lifecycle metadata and query indexes."""
+
+    dependencies: ClassVar[Sequence[Any]] = [
         ("core", "0001_initial"),
     ]
 
-    operations = [
+    operations: ClassVar[Sequence[Any]] = [
         migrations.AddField(
             model_name="planningcycle",
             name="completed_at",

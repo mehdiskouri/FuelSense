@@ -10,8 +10,7 @@ target-version = "py313"
 exclude = [".git", ".venv", "build", "dist"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "N"]
-ignore = ["W191", "N803", "N806", "F405", "SIM108", "UP042", "E501", "I001"]
+select = ["ALL"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["fuelsense", "fuelsense_common", "forecaster", "anomaly", "optimizer", "ml_pipeline"]
@@ -20,33 +19,13 @@ known-first-party = ["fuelsense", "fuelsense_common", "forecaster", "anomaly", "
 python_version = "3.13"
 plugins = ["mypy_django_plugin.main"]
 strict = true
+mypy_path = "typings"
 warn_return_any = true
 warn_unused_configs = true
-ignore_missing_imports = true
-allow_subclassing_any = true
-disallow_untyped_defs = false
-check_untyped_defs = false
-disable_error_code = [
-  "import-untyped",
-  "misc",
-  "no-untyped-def",
-  "untyped-decorator",
-  "no-untyped-call",
-  "type-arg",
-  "assignment",
-  "arg-type",
-  "method-assign",
-  "redundant-cast",
-  "var-annotated",
-]
-exclude = ["(^|/)tests/"]
-
-[[tool.mypy.overrides]]
-module = ["forecaster.*", "anomaly.*", "optimizer.*", "ml_pipeline.*", "fuelsense.*", "fuelsense_common.*"]
-strict = false
-disallow_untyped_defs = false
-warn_return_any = false
-ignore_missing_imports = true
+ignore_missing_imports = false
+allow_subclassing_any = false
+disallow_untyped_defs = true
+check_untyped_defs = true
 
 [tool.django-stubs]
 django_settings_module = "fuelsense.settings.development"

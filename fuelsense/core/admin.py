@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportCallIssue=false, reportMissingTypeArgument=false
 import base64
 import logging
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
+from typing import TYPE_CHECKING, Any, cast
 
-import matplotlib
+import matplotlib as mpl
+from celery import current_app
 from django.contrib import admin, messages
 from django.db.models import Avg, Count
 from django.shortcuts import render
@@ -31,11 +34,48 @@ from fuelsense.core.models import (
 )
 from fuelsense.core.reorder import filter_below_reorder
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
+    from django.db.models import QuerySet
+    from django.http import HttpRequest, HttpResponse
+    from django.urls.resolvers import URLPattern, URLResolver
+
+    InventoryLogInlineBase = admin.TabularInline[InventoryLog, Facility]
+    DeliveryItemInlineBase = admin.TabularInline[DeliveryItem, Delivery]
+    FacilityAdminBase = admin.ModelAdmin[Facility]
+    DeliveryAdminBase = admin.ModelAdmin[Delivery]
+    PlanningCycleAdminBase = admin.ModelAdmin[PlanningCycle]
+    ModelRegistryAdminBase = admin.ModelAdmin[ModelRegistry]
+    FuelTypeAdminBase = admin.ModelAdmin[FuelType]
+    DepotAdminBase = admin.ModelAdmin[Depot]
+    DepotFacilityAssignmentAdminBase = admin.ModelAdmin[DepotFacilityAssignment]
+    VehicleAdminBase = admin.ModelAdmin[Vehicle]
+    InventoryLogAdminBase = admin.ModelAdmin[InventoryLog]
+    DeliveryItemAdminBase = admin.ModelAdmin[DeliveryItem]
+    ForecastAdminBase = admin.ModelAdmin[Forecast]
+    AnomalyAlertAdminBase = admin.ModelAdmin[AnomalyAlert]
+else:
+    InventoryLogInlineBase = admin.TabularInline
+    DeliveryItemInlineBase = admin.TabularInline
+    FacilityAdminBase = admin.ModelAdmin
+    DeliveryAdminBase = admin.ModelAdmin
+    PlanningCycleAdminBase = admin.ModelAdmin
+    ModelRegistryAdminBase = admin.ModelAdmin
+    FuelTypeAdminBase = admin.ModelAdmin
+    DepotAdminBase = admin.ModelAdmin
+    DepotFacilityAssignmentAdminBase = admin.ModelAdmin
+    VehicleAdminBase = admin.ModelAdmin
+    InventoryLogAdminBase = admin.ModelAdmin
+    DeliveryItemAdminBase = admin.ModelAdmin
+    ForecastAdminBase = admin.ModelAdmin
+    AnomalyAlertAdminBase = admin.ModelAdmin
+
+mpl.use("Agg")
+import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
+FORECAST_STALE_DAYS_THRESHOLD = 7
 
 
 def _figure_to_base64() -> str:
@@ -46,11 +86,11 @@ def _figure_to_base64() -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list[float], int]:
+def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[datetime], list[float], int]:
     if not isinstance(forecast.predictions_json, list):
         return [], [], 0
 
-    timestamps: list[object] = []
+    timestamps: list[datetime] = []
     values: list[float] = []
     skipped_points = 0
 
@@ -68,9 +108,13 @@ def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list
             day_offset = idx
 
         raw_p50 = raw.get("p50")
-        try:
-            p50_value = float(raw_p50)
-        except (TypeError, ValueError):
+        if isinstance(raw_p50, (int, float, str)):
+            try:
+                p50_value = float(raw_p50)
+            except ValueError:
+                skipped_points += 1
+                continue
+        else:
             skipped_points += 1
             continue
         if not math.isfinite(p50_value):
@@ -95,20 +139,26 @@ def _extract_forecast_p50_points(forecast: Forecast) -> tuple[list[object], list
     return timestamps, values, skipped_points
 
 
-class InventoryLogInline(admin.TabularInline):
+class InventoryLogInline(InventoryLogInlineBase):
+    """Inline inventory log preview for facility admin pages."""
+
     model = InventoryLog
     extra = 0
     max_num = 10
     ordering = ("-timestamp",)
 
 
-class DeliveryItemInline(admin.TabularInline):
+class DeliveryItemInline(DeliveryItemInlineBase):
+    """Inline delivery items editor for delivery admin pages."""
+
     model = DeliveryItem
     extra = 0
 
 
 @admin.register(Facility)
-class FacilityAdmin(admin.ModelAdmin):
+class FacilityAdmin(FacilityAdminBase):
+    """Admin configuration for facilities with forecast and inventory charts."""
+
     list_display = (
         "name",
         "facility_type",
@@ -119,19 +169,25 @@ class FacilityAdmin(admin.ModelAdmin):
         "is_active",
     )
     list_filter = ("fuel_type", "facility_type", "is_active")
-    inlines = [InventoryLogInline]
-    actions = ["trigger_emergency_delivery"]
+    inlines = (InventoryLogInline,)
+    actions = ("trigger_emergency_delivery",)
     change_form_template = "admin/core/facility_change_form.html"
 
     @admin.action(description="Trigger Emergency Delivery")
-    def trigger_emergency_delivery(self, request, queryset):
-        from celery import current_app
-
+    def trigger_emergency_delivery(self, request: HttpRequest, queryset: QuerySet[Facility]) -> None:
+        """Queue emergency delivery tasks for selected facilities."""
         for facility in queryset:
             current_app.send_task("fuelsense.core.tasks.trigger_emergency_delivery", args=[facility.id])
         self.message_user(request, f"Queued emergency delivery for {queryset.count()} facilities.", messages.SUCCESS)
 
-    def change_view(self, request, object_id, form_url="", extra_context=None):
+    def change_view(
+        self,
+        request: HttpRequest,
+        object_id: str,
+        form_url: str = "",
+        extra_context: dict[str, object] | None = None,
+    ) -> HttpResponse:
+        """Render facility admin page with inventory/forecast overlays and alert context."""
         extra_context = extra_context or {}
         facility = Facility.objects.filter(pk=object_id).first()
         if facility:
@@ -142,26 +198,26 @@ class FacilityAdmin(admin.ModelAdmin):
             extra_context["forecast_stale_days"] = 0
             extra_context["forecast_skipped_points"] = 0
 
-            forecast_timestamps: list[object] = []
+            forecast_timestamps: list[datetime] = []
             forecast_values: list[float] = []
             if latest_forecast:
                 forecast_timestamps, forecast_values, skipped_points = _extract_forecast_p50_points(latest_forecast)
                 forecast_age_days = max((timezone.now() - latest_forecast.created_at).days, 0)
                 extra_context["forecast_model_version"] = latest_forecast.model_version
                 extra_context["forecast_is_fallback"] = latest_forecast.model_version == "fallback-local"
-                extra_context["forecast_is_stale"] = forecast_age_days > 7
+                extra_context["forecast_is_stale"] = forecast_age_days > FORECAST_STALE_DAYS_THRESHOLD
                 extra_context["forecast_stale_days"] = forecast_age_days
                 extra_context["forecast_skipped_points"] = skipped_points
 
-            logs = facility.inventory_logs.order_by("-timestamp")[:30]
-            logs = list(reversed(logs))
+            logs_qs = facility.inventory_logs.order_by("-timestamp")[:30]
+            logs = list(reversed(logs_qs))
             if logs:
                 plt.figure(figsize=(8, 3))
                 x = [log.timestamp for log in logs]
-                plt.plot(x, [log.consumption for log in logs], label="Consumption")
-                plt.plot(x, [log.inventory_level for log in logs], label="Inventory")
+                plt.plot(cast("Any", x), [log.consumption for log in logs], label="Consumption")
+                plt.plot(cast("Any", x), [log.inventory_level for log in logs], label="Inventory")
                 if forecast_timestamps and forecast_values:
-                    plt.plot(forecast_timestamps, forecast_values, "o-", label="Forecast p50")
+                    plt.plot(cast("Any", forecast_timestamps), forecast_values, "o-", label="Forecast p50")
                 plt.legend()
                 extra_context["facility_chart_b64"] = _figure_to_base64()
             extra_context["recent_alerts"] = facility.alerts.order_by("-timestamp")[:10]
@@ -169,13 +225,22 @@ class FacilityAdmin(admin.ModelAdmin):
 
 
 @admin.register(Delivery)
-class DeliveryAdmin(admin.ModelAdmin):
+class DeliveryAdmin(DeliveryAdminBase):
+    """Admin configuration for deliveries with route map rendering."""
+
     list_display = ("id", "depot", "vehicle", "planned_date", "status", "total_cost", "total_distance_km")
     list_filter = ("status", "planned_date")
-    inlines = [DeliveryItemInline]
+    inlines = (DeliveryItemInline,)
     change_form_template = "admin/core/delivery_change_form.html"
 
-    def change_view(self, request, object_id, form_url="", extra_context=None):
+    def change_view(
+        self,
+        request: HttpRequest,
+        object_id: str,
+        form_url: str = "",
+        extra_context: dict[str, object] | None = None,
+    ) -> HttpResponse:
+        """Render delivery admin page with route map and cost breakdown."""
         extra_context = extra_context or {}
         delivery = (
             Delivery.objects.select_related("depot").prefetch_related("items__facility").filter(pk=object_id).first()
@@ -203,7 +268,9 @@ class DeliveryAdmin(admin.ModelAdmin):
 
 
 @admin.register(PlanningCycle)
-class PlanningCycleAdmin(admin.ModelAdmin):
+class PlanningCycleAdmin(PlanningCycleAdminBase):
+    """Read-only admin representation for planning cycle execution records."""
+
     list_display = (
         "triggered_at",
         "trigger_type",
@@ -216,39 +283,45 @@ class PlanningCycleAdmin(admin.ModelAdmin):
         "baseline_cost",
         "cost_reduction_pct",
     )
-    readonly_fields = [field.name for field in PlanningCycle._meta.fields]
+    readonly_fields = tuple(field.name for field in PlanningCycle._meta.fields)  # noqa: SLF001
 
 
 @admin.register(ModelRegistry)
-class ModelRegistryAdmin(admin.ModelAdmin):
+class ModelRegistryAdmin(ModelRegistryAdminBase):
+    """Admin configuration for model registry lifecycle operations."""
+
     list_display = ("model_type", "facility", "version", "is_active", "trained_at", "drift_ratio")
     list_filter = ("model_type", "is_active")
-    actions = ["promote_to_active", "rollback_to_previous"]
+    actions = ("promote_to_active", "rollback_to_previous")
 
     @admin.action(description="Promote to Active")
-    def promote_to_active(self, request, queryset):
+    def promote_to_active(self, request: HttpRequest, queryset: QuerySet[ModelRegistry]) -> None:
+        """Promote selected models as active and demote siblings for same scope."""
         for model in queryset:
             ModelRegistry.objects.filter(model_type=model.model_type, facility=model.facility).exclude(
-                id=model.id
+                id=model.id,
             ).update(is_active=False)
             model.is_active = True
             model.save(update_fields=["is_active"])
         self.message_user(request, f"Promoted {queryset.count()} model(s).", messages.SUCCESS)
 
     @admin.action(description="Rollback to Previous")
-    def rollback_to_previous(self, request, queryset):
+    def rollback_to_previous(self, request: HttpRequest, queryset: QuerySet[ModelRegistry]) -> None:
+        """Rollback selected models to the highest available previous version."""
         rolled = 0
         for model in queryset:
             prev = (
                 ModelRegistry.objects.filter(
-                    model_type=model.model_type, facility=model.facility, version__lt=model.version
+                    model_type=model.model_type,
+                    facility=model.facility,
+                    version__lt=model.version,
                 )
                 .order_by("-version")
                 .first()
             )
             if prev:
                 ModelRegistry.objects.filter(model_type=model.model_type, facility=model.facility).update(
-                    is_active=False
+                    is_active=False,
                 )
                 prev.is_active = True
                 prev.save(update_fields=["is_active"])
@@ -257,46 +330,63 @@ class ModelRegistryAdmin(admin.ModelAdmin):
 
 
 @admin.register(FuelType)
-class FuelTypeAdmin(admin.ModelAdmin):
-    pass
+class FuelTypeAdmin(FuelTypeAdminBase):
+    """Admin registration for fuel type records."""
+
+    list_display = ()
 
 
 @admin.register(Depot)
-class DepotAdmin(admin.ModelAdmin):
-    pass
+class DepotAdmin(DepotAdminBase):
+    """Admin registration for depots."""
+
+    list_display = ()
 
 
 @admin.register(DepotFacilityAssignment)
-class DepotFacilityAssignmentAdmin(admin.ModelAdmin):
-    pass
+class DepotFacilityAssignmentAdmin(DepotFacilityAssignmentAdminBase):
+    """Admin registration for depot-facility assignments."""
+
+    list_display = ()
 
 
 @admin.register(Vehicle)
-class VehicleAdmin(admin.ModelAdmin):
-    pass
+class VehicleAdmin(VehicleAdminBase):
+    """Admin registration for vehicle records."""
+
+    list_display = ()
 
 
 @admin.register(InventoryLog)
-class InventoryLogAdmin(admin.ModelAdmin):
-    pass
+class InventoryLogAdmin(InventoryLogAdminBase):
+    """Admin registration for inventory logs."""
+
+    list_display = ()
 
 
 @admin.register(DeliveryItem)
-class DeliveryItemAdmin(admin.ModelAdmin):
-    pass
+class DeliveryItemAdmin(DeliveryItemAdminBase):
+    """Admin registration for delivery items."""
+
+    list_display = ()
 
 
 @admin.register(Forecast)
-class ForecastAdmin(admin.ModelAdmin):
-    pass
+class ForecastAdmin(ForecastAdminBase):
+    """Admin registration for forecast records."""
+
+    list_display = ()
 
 
 @admin.register(AnomalyAlert)
-class AnomalyAlertAdmin(admin.ModelAdmin):
-    pass
+class AnomalyAlertAdmin(AnomalyAlertAdminBase):
+    """Admin registration for anomaly alerts."""
+
+    list_display = ()
 
 
-def admin_dashboard(request):
+def admin_dashboard(request: HttpRequest) -> HttpResponse:
+    """Render operational admin dashboard with KPI snapshots and activity lists."""
     below_reorder = filter_below_reorder(Facility.objects.all())
     in_transit = Delivery.objects.filter(status=Delivery.Status.IN_TRANSIT)
     today_alerts = AnomalyAlert.objects.filter(timestamp__date=timezone.now().date()).order_by("-timestamp")
@@ -327,8 +417,10 @@ def admin_dashboard(request):
     )
 
 
-def get_admin_urls(urls):
-    def get_urls():
+def get_admin_urls(urls: Callable[[], list[URLResolver | URLPattern]]) -> Callable[[], list[URLResolver | URLPattern]]:
+    """Inject FuelSense dashboard route into Django admin URL set."""
+
+    def get_urls() -> list[URLResolver | URLPattern]:
         custom_urls = [
             path("fuelsense/dashboard/", admin.site.admin_view(admin_dashboard), name="fuelsense-dashboard"),
         ]
@@ -337,4 +429,4 @@ def get_admin_urls(urls):
     return get_urls
 
 
-admin.site.get_urls = get_admin_urls(admin.site.get_urls)
+cast(Any, admin.site).get_urls = get_admin_urls(admin.site.get_urls)  # noqa: TC006

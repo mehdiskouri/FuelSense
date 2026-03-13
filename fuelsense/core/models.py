@@ -9,17 +9,24 @@ from fuelsense.core.reorder import get_effective_reorder_point
 
 
 class FuelType(models.Model):
+    """Catalog entry for a fuel commodity."""
+
     name = models.CharField(max_length=50)
     unit = models.CharField(max_length=20)
     density_kg_per_unit = models.FloatField()
     hazmat_class = models.CharField(max_length=10, blank=True)
 
     def __str__(self) -> str:
+        """Return the display name for admin and logs."""
         return self.name
 
 
 class Facility(models.Model):
+    """Operational site that stores and consumes fuel."""
+
     class FacilityType(models.TextChoices):
+        """Supported facility categories."""
+
         POWER_PLANT = "POWER_PLANT", "Power Plant"
         INDUSTRIAL = "INDUSTRIAL", "Industrial"
         STORAGE = "STORAGE", "Storage"
@@ -39,17 +46,25 @@ class Facility(models.Model):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        indexes = [
+        """Model indexes for common facility filters."""
+
+        indexes = (
             models.Index(fields=["fuel_type", "is_active"]),
             models.Index(fields=["current_inventory"]),
-        ]
+        )
+
+    def __str__(self) -> str:
+        """Return facility name for display contexts."""
+        return self.name
 
     @property
     def effective_reorder_point(self) -> float:
+        """Return dynamic threshold with min-safe fallback semantics."""
         return get_effective_reorder_point(self.dynamic_reorder_point, self.min_safe_inventory)
 
     @property
     def reorder_status(self) -> str:
+        """Compute qualitative inventory risk against reorder thresholds."""
         reorder_point = self.effective_reorder_point
         if self.current_inventory <= self.min_safe_inventory:
             return "CRITICAL"
@@ -57,34 +72,44 @@ class Facility(models.Model):
             return "WARNING"
         return "OK"
 
-    def __str__(self) -> str:
-        return self.name
-
 
 class Depot(models.Model):
+    """Supply origin servicing one or more facilities."""
+
     name = models.CharField(max_length=200)
     latitude = models.FloatField()
     longitude = models.FloatField()
     fuel_type = models.ForeignKey(FuelType, on_delete=models.PROTECT)
     fuel_inventory = models.FloatField()
-    facilities = models.ManyToManyField(Facility, through="DepotFacilityAssignment")
+    facilities: models.ManyToManyField[Facility, DepotFacilityAssignment] = models.ManyToManyField(
+        Facility,
+        through="DepotFacilityAssignment",
+    )
 
     def __str__(self) -> str:
+        """Return depot name for display contexts."""
         return self.name
 
 
 class DepotFacilityAssignment(models.Model):
+    """Many-to-many bridge linking depots to facilities."""
+
     depot = models.ForeignKey(Depot, on_delete=models.CASCADE)
     facility = models.ForeignKey(Facility, on_delete=models.CASCADE)
 
     class Meta:
-        unique_together = [["depot", "facility"]]
+        """Enforce unique assignment per depot/facility pair."""
+
+        unique_together = (("depot", "facility"),)
 
     def __str__(self) -> str:
+        """Return a readable depot-to-facility mapping string."""
         return f"{self.depot} -> {self.facility}"
 
 
 class Vehicle(models.Model):
+    """Transport unit available for planning and delivery."""
+
     depot = models.ForeignKey(Depot, on_delete=models.CASCADE, related_name="vehicles")
     registration = models.CharField(max_length=50, unique=True)
     capacity = models.FloatField()
@@ -92,10 +117,13 @@ class Vehicle(models.Model):
     is_available = models.BooleanField(default=True)
 
     def __str__(self) -> str:
+        """Return vehicle registration identifier."""
         return self.registration
 
 
 class InventoryLog(models.Model):
+    """Time-series inventory and weather snapshot for a facility."""
+
     facility = models.ForeignKey(Facility, on_delete=models.CASCADE, related_name="inventory_logs")
     timestamp = models.DateTimeField()
     inventory_level = models.FloatField()
@@ -105,20 +133,29 @@ class InventoryLog(models.Model):
     solar_irradiance = models.FloatField(null=True)
 
     class Meta:
-        indexes = [models.Index(fields=["facility", "-timestamp"])]
-        unique_together = [["facility", "timestamp"]]
+        """Optimize facility time-series access and uniqueness."""
+
+        indexes = (models.Index(fields=["facility", "-timestamp"]),)
+        unique_together = (("facility", "timestamp"),)
 
     def __str__(self) -> str:
+        """Return compact facility/timestamp label."""
         return f"{self.facility.name} @ {self.timestamp.isoformat()}"
 
 
 class PlanningCycle(models.Model):
+    """Planning execution lifecycle and aggregate optimization metrics."""
+
     class TriggerType(models.TextChoices):
+        """Planning invocation source."""
+
         SCHEDULED = "SCHEDULED", "Scheduled"
         MANUAL = "MANUAL", "Manual"
         EMERGENCY = "EMERGENCY", "Emergency"
 
     class ExecutionStatus(models.TextChoices):
+        """Lifecycle state for planning execution."""
+
         QUEUED = "QUEUED", "Queued"
         RUNNING = "RUNNING", "Running"
         COMPLETED = "COMPLETED", "Completed"
@@ -142,17 +179,24 @@ class PlanningCycle(models.Model):
     cost_reduction_pct = models.FloatField(null=True)
 
     class Meta:
-        indexes = [
+        """Indexes for planning history and lifecycle queries."""
+
+        indexes = (
             models.Index(fields=["status", "trigger_type"]),
             models.Index(fields=["-triggered_at", "status"]),
-        ]
+        )
 
     def __str__(self) -> str:
+        """Return trigger/status label for operator visibility."""
         return f"PlanningCycle {self.id} ({self.trigger_type}/{self.status})"
 
 
 class Delivery(models.Model):
+    """Route plan assigned to one vehicle for one planning date."""
+
     class Status(models.TextChoices):
+        """Delivery execution states."""
+
         PLANNED = "PLANNED", "Planned"
         IN_TRANSIT = "IN_TRANSIT", "In Transit"
         DELIVERED = "DELIVERED", "Delivered"
@@ -170,10 +214,13 @@ class Delivery(models.Model):
     created_by_planning_cycle = models.ForeignKey(PlanningCycle, null=True, on_delete=models.SET_NULL)
 
     def __str__(self) -> str:
+        """Return compact delivery id and status."""
         return f"Delivery {self.id} ({self.status})"
 
 
 class DeliveryItem(models.Model):
+    """Single stop within a delivery route."""
+
     delivery = models.ForeignKey(Delivery, on_delete=models.CASCADE, related_name="items")
     facility = models.ForeignKey(Facility, on_delete=models.CASCADE)
     quantity = models.FloatField()
@@ -182,10 +229,13 @@ class DeliveryItem(models.Model):
     sequence = models.PositiveIntegerField()
 
     def __str__(self) -> str:
+        """Return delivery and stop sequence label."""
         return f"Delivery {self.delivery_id} stop {self.sequence}"
 
 
 class Forecast(models.Model):
+    """Persisted demand forecast artifact for a facility."""
+
     facility = models.ForeignKey(Facility, on_delete=models.CASCADE, related_name="forecasts")
     model_version = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -194,11 +244,16 @@ class Forecast(models.Model):
     rmse = models.FloatField(null=True)
 
     def __str__(self) -> str:
+        """Return compact forecast identity string."""
         return f"Forecast {self.facility_id} v{self.model_version}"
 
 
 class AnomalyAlert(models.Model):
+    """Detected anomaly event requiring operational review."""
+
     class AnomalyType(models.TextChoices):
+        """Anomaly categories emitted by the detector."""
+
         LEAK = "LEAK", "Leak"
         THEFT = "THEFT", "Theft"
         EQUIPMENT_DEGRADATION = "EQUIPMENT_DEGRADATION", "Equipment Degradation"
@@ -216,11 +271,16 @@ class AnomalyAlert(models.Model):
     notes = models.TextField(blank=True)
 
     def __str__(self) -> str:
+        """Return anomaly type and facility identifier."""
         return f"{self.anomaly_type} @ facility {self.facility_id}"
 
 
 class ModelRegistry(models.Model):
+    """Version registry for demand and anomaly models."""
+
     class ModelType(models.TextChoices):
+        """Supported model families in registry."""
+
         DEMAND_FORECAST = "DEMAND_FORECAST", "Demand Forecast"
         ANOMALY_DETECTOR = "ANOMALY_DETECTOR", "Anomaly Detector"
 
@@ -236,5 +296,6 @@ class ModelRegistry(models.Model):
     last_drift_check = models.DateTimeField(null=True)
 
     def __str__(self) -> str:
+        """Return model family/facility/version identifier."""
         facility_id = self.facility_id if self.facility_id is not None else "global"
         return f"{self.model_type}:{facility_id}:v{self.version}"

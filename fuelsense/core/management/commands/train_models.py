@@ -1,28 +1,48 @@
+"""Management command to dispatch and monitor model retraining tasks."""
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Protocol, cast
 
-from celery.result import AsyncResult
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import DatabaseError
-from django.core.management.base import BaseCommand, CommandError
 
 from fuelsense.core.models import Facility, ModelRegistry
 from fuelsense.core.tasks import retrain_model
 
 
+class _AsyncResultLike(Protocol):
+    """Typed subset of Celery AsyncResult used by this command."""
+
+    id: str
+
+    def get(self, *, timeout: int) -> object: ...
+
+
+class _RetrainTaskLike(Protocol):
+    """Typed subset of the retraining task object with delay dispatch."""
+
+    def delay(self, facility_id: int | None, model_type: str) -> _AsyncResultLike: ...
+
+
 @dataclass(frozen=True)
 class TrainTarget:
+    """Resolved training target descriptor for one queued retraining job."""
+
     label: str
     facility_id: int | None
     model_type: str
 
 
 class Command(BaseCommand):
+    """Dispatch retraining jobs for demand and anomaly models."""
+
     help = "Train and register demand/anomaly models via Celery tasks."
 
-    def add_arguments(self, parser: Any) -> None:
+    def add_arguments(self, parser: CommandParser) -> None:
+        """Register command-line options for model selection and dispatch behavior."""
         parser.add_argument(
             "--models",
             choices=["demand", "anomaly", "all"],
@@ -53,7 +73,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Also train a global demand model (facility_id=None).",
         )
-        parser.add_argument("--dry-run", action="store_true", help="Print resolved training targets without dispatch.")
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Print resolved training targets without dispatch.",
+        )
         parser.add_argument("--wait", action="store_true", help="Wait for all enqueued tasks and print outcomes.")
         parser.add_argument(
             "--wait-timeout",
@@ -62,13 +86,15 @@ class Command(BaseCommand):
             help="Per-task wait timeout in seconds when --wait is enabled.",
         )
 
-    def handle(self, *args: Any, **options: Any) -> None:
-        targets = self._resolve_targets(options)
+    def handle(self, *_args: object, **options: object) -> None:
+        """Resolve targets, dispatch retraining tasks, and optionally wait for completion."""
+        typed_options = options
+        targets = self._resolve_targets(typed_options)
         if not targets:
             self.stdout.write(self.style.WARNING("No training targets resolved."))
             return
 
-        if options["dry_run"]:
+        if bool(typed_options["dry_run"]):
             self.stdout.write(self.style.WARNING("DRY-RUN: no tasks dispatched."))
             for target in targets:
                 self.stdout.write(f"target={target.label} model_type={target.model_type}")
@@ -78,20 +104,21 @@ class Command(BaseCommand):
         if os.environ.get("FUELSENSE_ENABLE_TRAINING_TASKS", "0") != "1":
             self.stdout.write(
                 self.style.WARNING(
-                    "Training tasks are disabled. Set FUELSENSE_ENABLE_TRAINING_TASKS=1 to enable dispatch."
-                )
+                    "Training tasks are disabled. Set FUELSENSE_ENABLE_TRAINING_TASKS=1 to enable dispatch.",
+                ),
             )
             return
 
-        async_jobs: list[tuple[TrainTarget, AsyncResult]] = []
+        retrain_task = cast("_RetrainTaskLike", retrain_model)
+        async_jobs: list[tuple[TrainTarget, _AsyncResultLike]] = []
         for target in targets:
-            async_result = retrain_model.delay(target.facility_id, target.model_type)
+            async_result = retrain_task.delay(target.facility_id, target.model_type)
             async_jobs.append((target, async_result))
             self.stdout.write(f"queued target={target.label} task_id={async_result.id}")
 
         self.stdout.write(f"Enqueued {len(async_jobs)} training task(s).")
 
-        if not options["wait"]:
+        if not bool(typed_options["wait"]):
             return
 
         summary: dict[str, int] = {
@@ -104,8 +131,8 @@ class Command(BaseCommand):
         }
         for target, async_result in async_jobs:
             try:
-                payload = async_result.get(timeout=int(options["wait_timeout"]))
-            except Exception as exc:
+                payload = async_result.get(timeout=self._coerce_int(typed_options.get("wait_timeout"), 1800))
+            except (RuntimeError, TimeoutError, ValueError, TypeError) as exc:
                 summary["failed"] += 1
                 self.stdout.write(self.style.ERROR(f"failed target={target.label} error={exc}"))
                 continue
@@ -118,18 +145,21 @@ class Command(BaseCommand):
             "Summary: "
             + ", ".join(
                 f"{key}={value}" for key, value in summary.items() if value > 0 or key in {"promoted", "failed"}
-            )
+            ),
         )
 
         if summary["failed"] > 0:
-            raise CommandError("One or more training tasks failed.")
+            msg = "One or more training tasks failed."
+            raise CommandError(msg)
 
-    def _resolve_targets(self, options: dict[str, Any]) -> list[TrainTarget]:
+    def _resolve_targets(self, options: dict[str, object]) -> list[TrainTarget]:
         selected = str(options["models"])
         include_demand = selected in {"demand", "all"}
         include_anomaly = selected in {"anomaly", "all"}
 
-        provided_ids = {int(fid) for fid in list(options["facility_id"]) + list(options["facility_ids"])}
+        facility_ids_option = cast("list[int]", options["facility_id"])
+        facility_ids_bulk_option = cast("list[int]", options["facility_ids"])
+        provided_ids = {int(fid) for fid in [*facility_ids_option, *facility_ids_bulk_option]}
         explicit_selectors = bool(provided_ids) or bool(options["all_active"])
 
         targets: list[TrainTarget] = []
@@ -143,18 +173,20 @@ class Command(BaseCommand):
                     self.stdout.write(
                         self.style.WARNING(
                             f"Unable to resolve active demand facilities from database: {exc}. "
-                            "Proceeding without auto-selected demand targets."
-                        )
+                            "Proceeding without auto-selected demand targets.",
+                        ),
                     )
 
-            for facility_id in sorted(demand_facility_ids):
-                targets.append(
+            targets.extend(
+                [
                     TrainTarget(
                         label=f"demand:facility:{facility_id}",
                         facility_id=facility_id,
                         model_type=ModelRegistry.ModelType.DEMAND_FORECAST,
                     )
-                )
+                    for facility_id in sorted(demand_facility_ids)
+                ],
+            )
 
             if options["include_global_demand"]:
                 targets.append(
@@ -162,20 +194,20 @@ class Command(BaseCommand):
                         label="demand:global",
                         facility_id=None,
                         model_type=ModelRegistry.ModelType.DEMAND_FORECAST,
-                    )
+                    ),
                 )
 
         if include_anomaly:
             if explicit_selectors:
                 self.stdout.write(
-                    self.style.WARNING("Facility selectors are ignored for anomaly training (global-only model).")
+                    self.style.WARNING("Facility selectors are ignored for anomaly training (global-only model)."),
                 )
             targets.append(
                 TrainTarget(
                     label="anomaly:global",
                     facility_id=None,
                     model_type=ModelRegistry.ModelType.ANOMALY_DETECTOR,
-                )
+                ),
             )
 
         return targets
@@ -184,7 +216,18 @@ class Command(BaseCommand):
     def _status_from_payload(payload: object) -> str:
         if not isinstance(payload, dict):
             return "unknown"
-        status = str(payload.get("status", "unknown"))
+        payload_dict = cast("dict[str, object]", payload)
+        status = str(payload_dict.get("status", "unknown"))
         if status in {"promoted", "rejected", "failed", "skipped", "disabled"}:
             return status
         return "unknown"
+
+    @staticmethod
+    def _coerce_int(value: object, default: int) -> int:
+        """Convert object values to int with a fallback default."""
+        try:
+            if not isinstance(value, (int, str, bytes, bytearray)):
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default

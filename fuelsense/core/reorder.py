@@ -2,29 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from django.db.models import Case
-from django.db.models import F
-from django.db.models import FloatField
-from django.db.models import QuerySet
-from django.db.models import When
-
+from django.db.models import Case, F, FloatField, QuerySet, When
 
 EFFECTIVE_REORDER_ALIAS = "_effective_reorder_point"
 
 
 def is_reliable_reorder_point(value: float | None) -> bool:
+    """Return whether a dynamic reorder threshold can be safely used."""
     return value is not None and float(value) > 0.0
 
 
 def get_effective_reorder_point(dynamic_reorder_point: float | None, min_safe_inventory: float) -> float:
-    if is_reliable_reorder_point(dynamic_reorder_point):
+    """Resolve the effective reorder threshold with fallback semantics."""
+    if dynamic_reorder_point is not None and dynamic_reorder_point > 0.0:
         return float(dynamic_reorder_point)
     return float(min_safe_inventory)
 
 
 def effective_reorder_point_expression() -> Case:
+    """Build a queryset expression for effective reorder point selection."""
     return Case(
         When(dynamic_reorder_point__gt=0.0, then=F("dynamic_reorder_point")),
         default=F("min_safe_inventory"),
@@ -33,8 +31,11 @@ def effective_reorder_point_expression() -> Case:
 
 
 def with_effective_reorder_point(queryset: QuerySet[Any]) -> QuerySet[Any]:
-    return queryset.annotate(**{EFFECTIVE_REORDER_ALIAS: effective_reorder_point_expression()})
+    """Annotate a queryset with an effective reorder threshold alias."""
+    annotated = queryset.annotate(**{EFFECTIVE_REORDER_ALIAS: effective_reorder_point_expression()})
+    return cast("QuerySet[Any]", annotated)
 
 
 def filter_below_reorder(queryset: QuerySet[Any]) -> QuerySet[Any]:
+    """Filter facilities whose inventory is below effective reorder threshold."""
     return with_effective_reorder_point(queryset).filter(current_inventory__lte=F(EFFECTIVE_REORDER_ALIAS))

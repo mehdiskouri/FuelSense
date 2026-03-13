@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar, Protocol
 
-import numpy as np
+
+class _RngLike(Protocol):
+    """Typed subset of RNG API used by anomaly sampling logic."""
+
+    def random(self) -> float: ...
+
+    def choice(self, values: list[str]) -> str: ...
+
+    def integers(self, low: int, high: int) -> int: ...
+
+    def uniform(self, low: float, high: float) -> float: ...
 
 
 @dataclass
 class AnomalyEvent:
+    """Metadata describing an injected anomaly window."""
+
     anomaly_type: str
     start_day: int
     duration: int
@@ -18,7 +31,7 @@ class AnomalyEvent:
 class AnomalyInjector:
     """Inject random anomalies into daily consumption traces."""
 
-    anomaly_types = [
+    anomaly_types: ClassVar[list[str]] = [
         "LEAK",
         "THEFT",
         "EQUIPMENT_DEGRADATION",
@@ -26,12 +39,15 @@ class AnomalyInjector:
         "SENSOR_FAULT",
     ]
 
+    SENSOR_FAULT_ZERO_PROBABILITY: ClassVar[float] = 0.5
+
     def __init__(self, trigger_probability: float = 0.05) -> None:
+        """Configure anomaly trigger chance and initialize per-facility state."""
         self.trigger_probability = trigger_probability
         self._active: dict[str, AnomalyEvent] = {}
         self._shift_multiplier: dict[str, float] = {}
 
-    def _sample_event(self, day: int, rng: np.random.Generator) -> AnomalyEvent:
+    def _sample_event(self, day: int, rng: _RngLike) -> AnomalyEvent:
         anomaly_type = str(rng.choice(self.anomaly_types))
         if anomaly_type == "LEAK":
             return AnomalyEvent(anomaly_type, day, int(rng.integers(3, 8)), float(rng.uniform(0.15, 0.30)))
@@ -49,9 +65,10 @@ class AnomalyInjector:
         day: int,
         consumption: float,
         base_load: float,
-        rng: np.random.Generator,
+        rng: _RngLike,
     ) -> tuple[float, AnomalyEvent | None]:
         """Apply anomaly process and return modified consumption plus optional label."""
+        _ = base_load
         if facility_key not in self._shift_multiplier:
             self._shift_multiplier[facility_key] = 1.0
 
@@ -80,7 +97,7 @@ class AnomalyInjector:
             day_offset = max(day - active.start_day + 1, 1)
             return output * (1.0 + active.magnitude * day_offset), active
         if active.anomaly_type == "SENSOR_FAULT":
-            return (0.0 if rng.random() < 0.5 else float("nan")), active
+            return (0.0 if rng.random() < self.SENSOR_FAULT_ZERO_PROBABILITY else float("nan")), active
 
         # Demand shift label for its trigger day.
         return output, active

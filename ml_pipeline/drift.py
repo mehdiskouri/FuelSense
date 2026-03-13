@@ -12,17 +12,22 @@ import numpy as np
 
 @dataclass(frozen=True)
 class DriftConfig:
+    """Configuration thresholds and sample requirements for drift checks."""
+
     drift_threshold: float = 1.5
     window_days: int = 7
     min_samples: int = 5
 
 
 class DriftMonitor:
+    """Compute drift diagnostics and retrain recommendations."""
+
     DRIFT_THRESHOLD = 1.5
     WINDOW_DAYS = 7
     MIN_SAMPLES = 5
 
     def __init__(self, config: DriftConfig | None = None) -> None:
+        """Initialize monitor with explicit config or class-default parameters."""
         cfg = config or DriftConfig(
             drift_threshold=self.DRIFT_THRESHOLD,
             window_days=self.WINDOW_DAYS,

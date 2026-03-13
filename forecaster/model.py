@@ -5,11 +5,14 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 
+TARGET_MATRIX_NDIMS = 2
+
 
 class CausalConv1d(nn.Module):
     """Conv1d with causal padding so outputs depend only on current and past timesteps."""
 
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, dilation: int) -> None:
+        """Initialize a Conv1d layer with left padding for causality."""
         super().__init__()
         self.padding = (kernel_size - 1) * dilation
         self.conv = nn.Conv1d(
@@ -21,7 +24,9 @@ class CausalConv1d(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        out = self.conv(x)
+        """Apply the causal convolution and trim padded timesteps."""
+        out = x
+        out = self.conv(out)
         if self.padding > 0:
             out = out[:, :, : -self.padding]
         return out
@@ -31,6 +36,7 @@ class TCNBlock(nn.Module):
     """Residual TCN block with two causal convolutions."""
 
     def __init__(self, in_ch: int, out_ch: int, kernel_size: int, dilation: int, dropout: float = 0.2) -> None:
+        """Build a residual temporal block with normalization and dropout."""
         super().__init__()
         self.conv1 = CausalConv1d(in_ch, out_ch, kernel_size, dilation)
         self.bn1 = nn.BatchNorm1d(out_ch)
@@ -45,7 +51,9 @@ class TCNBlock(nn.Module):
             self.residual = nn.Identity()
 
     def forward(self, x: Tensor) -> Tensor:
-        residual = self.residual(x)
+        """Run the residual TCN block for one feature map tensor."""
+        residual = x
+        residual = self.residual(residual)
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
@@ -68,6 +76,7 @@ class DemandTCN(nn.Module):
     N_QUANTILES = 3
 
     def __init__(self, hidden_channels: int = 32, kernel_size: int = 3, dropout: float = 0.2) -> None:
+        """Construct a 3-block TCN backbone and MLP quantile head."""
         super().__init__()
         self.backbone = nn.Sequential(
             TCNBlock(self.N_FEATURES, hidden_channels, kernel_size, dilation=1, dropout=dropout),
@@ -82,11 +91,13 @@ class DemandTCN(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        """Predict horizon quantiles from lookback feature windows."""
         # Input shape: [batch, lookback, features] -> [batch, features, lookback]
         x = x.permute(0, 2, 1)
         x = self.backbone(x)
         last_timestep = x[:, :, -1]
-        out = self.head(last_timestep)
+        out = last_timestep
+        out = self.head(out)
         return out.view(-1, self.HORIZON, self.N_QUANTILES)
 
 
@@ -94,11 +105,13 @@ class QuantileLoss(nn.Module):
     """Pinball loss for quantile regression outputs."""
 
     def __init__(self, quantiles: tuple[float, float, float] = (0.1, 0.5, 0.9)) -> None:
+        """Store quantile values used in pinball loss computation."""
         super().__init__()
         self._quantiles = torch.tensor(quantiles, dtype=torch.float32)
 
     def forward(self, preds: Tensor, target: Tensor) -> Tensor:
-        if target.ndim == 2:
+        """Compute average pinball loss for all quantiles and horizons."""
+        if target.ndim == TARGET_MATRIX_NDIMS:
             target = target.unsqueeze(-1)
         errors = target - preds
         q = self._quantiles.to(device=preds.device, dtype=preds.dtype).reshape(1, 1, -1)

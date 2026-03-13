@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import importlib
 import os
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from time import perf_counter
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import FastAPI, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.responses import Response
 
 from fuelsense_common.schemas import AnomalyDetectRequest, AnomalyDetectResponse, HealthResponse
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 INFERENCE_LATENCY = Histogram(
     "anomaly_detector_inference_latency_ms",
@@ -26,12 +28,31 @@ DETECTIONS_TOTAL = Counter(
     labelnames=("anomaly_type",),
 )
 
-detector: Any | None = None
+
+class _DetectorLike(Protocol):
+    is_loaded: bool
+
+    def load(self, forest_path: str, classifier_path: str) -> None: ...
+
+    def detect(
+        self,
+        actual: float,
+        predicted: float,
+        rolling_std: float,
+        features: dict[str, float],
+    ) -> dict[str, object]: ...
+
+
+class _RuntimeState:
+    detector: _DetectorLike | None = None
+
+
+RUNTIME_STATE = _RuntimeState()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    global detector
+    """Load optional anomaly detector artifacts at service startup."""
     detector_cls: type[Any] | None = None
     module = importlib.import_module("anomaly.detector")
     candidate = getattr(module, "AnomalyDetector", None)
@@ -39,13 +60,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         detector_cls = candidate
 
     if detector_cls is not None:
-        detector = detector_cls()
+        created = detector_cls()
+        RUNTIME_STATE.detector = created if hasattr(created, "load") else None
         forest_path = os.environ.get("ANOMALY_IFOREST_PATH", "").strip()
         classifier_path = os.environ.get("ANOMALY_CLASSIFIER_PATH", "").strip()
-        if forest_path and classifier_path and hasattr(detector, "load"):
-            cast(Any, detector).load(forest_path, classifier_path)
+        if forest_path and classifier_path and RUNTIME_STATE.detector is not None:
+            RUNTIME_STATE.detector.load(forest_path, classifier_path)
     else:
-        detector = None
+        RUNTIME_STATE.detector = None
 
     yield
 
@@ -55,11 +77,13 @@ app = FastAPI(title="FuelSense Anomaly", version="0.2.0", lifespan=lifespan)
 
 @app.post("/detect", response_model=AnomalyDetectResponse)
 def detect(request: AnomalyDetectRequest) -> AnomalyDetectResponse:
+    """Run anomaly detection inference for a single request payload."""
+    detector = RUNTIME_STATE.detector
     if detector is None or not hasattr(detector, "detect"):
         raise HTTPException(status_code=503, detail="Anomaly detector unavailable")
 
     start = perf_counter()
-    result = cast(Any, detector).detect(
+    result = detector.detect(
         actual=request.actual_consumption,
         predicted=request.predicted_consumption,
         rolling_std=request.rolling_std,
@@ -76,6 +100,8 @@ def detect(request: AnomalyDetectRequest) -> AnomalyDetectResponse:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    """Return service readiness and detector load state."""
+    detector = RUNTIME_STATE.detector
     if detector is None:
         return HealthResponse(status="degraded", device={"backend_loaded": False, "service": "anomaly"})
 
@@ -88,4 +114,5 @@ def health() -> HealthResponse:
 
 @app.get("/metrics")
 def metrics() -> Response:
+    """Expose Prometheus metrics for anomaly service endpoints."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

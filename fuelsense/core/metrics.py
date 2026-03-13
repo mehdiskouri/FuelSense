@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from django.db.models import Avg
 from prometheus_client import Counter, Gauge, Histogram
+
+from fuelsense.core.models import AnomalyAlert, Facility, Forecast
+from fuelsense.core.reorder import filter_below_reorder
 
 active_anomaly_alerts = Gauge("active_anomaly_alerts", "Unacknowledged anomaly alerts")
 facilities_below_reorder = Gauge("facilities_below_reorder", "Facilities below effective reorder point")
@@ -39,15 +43,12 @@ planning_stage_duration_seconds = Histogram(
 
 
 def observe_planning_stage(stage: str, duration_seconds: float, trigger_type: str) -> None:
+    """Record planning stage duration for a trigger type."""
     planning_stage_duration_seconds.labels(stage=stage, trigger_type=trigger_type).observe(duration_seconds)
 
 
 def refresh_business_gauges() -> None:
-    from django.db.models import Avg
-
-    from fuelsense.core.models import AnomalyAlert, Facility, Forecast
-    from fuelsense.core.reorder import filter_below_reorder
-
+    """Refresh exported business KPI gauges from current database state."""
     active_anomaly_alerts.set(AnomalyAlert.objects.filter(is_acknowledged=False).count())
     facilities_below_reorder.set(filter_below_reorder(Facility.objects.all()).count())
     value = float(Forecast.objects.exclude(rmse__isnull=True).aggregate(v=Avg("rmse"))["v"] or 0.0)

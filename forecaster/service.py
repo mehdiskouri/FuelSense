@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib import import_module
 from time import perf_counter
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -23,7 +23,9 @@ from fuelsense_common.schemas import (
     HealthResponse,
     QuantilePrediction,
 )
-import forecaster.backends  # noqa: F401
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 INFERENCE_LATENCY = Histogram(
     "forecaster_inference_latency_ms",
@@ -41,20 +43,33 @@ DEVICE_INFO = Gauge("forecaster_device_gpu", "1 if CUDA is active, 0 for CPU")
 
 backend: ComputeBackend | None = None
 device_type: DeviceType = DeviceType.CPU
+PREDICTION_NDIM = 3
 
 
-def _coerce_predictions(predictions: Any) -> np.ndarray:
+class _RuntimeState:
+    def __init__(self) -> None:
+        self.backend: ComputeBackend | None = None
+        self.device_type: DeviceType = DeviceType.CPU
+
+
+RUNTIME_STATE = _RuntimeState()
+
+
+def _coerce_predictions(predictions: object) -> np.ndarray:
     arr = np.asarray(predictions, dtype=np.float32)
-    if arr.ndim != 3:
-        raise ValueError("backend prediction output must have shape [n, horizon, quantiles]")
+    if arr.ndim != PREDICTION_NDIM:
+        msg = "backend prediction output must have shape [n, horizon, quantiles]"
+        raise ValueError(msg)
     return arr
 
 
 def _validate_lookback_matrix(lookback: np.ndarray) -> None:
     if lookback.shape != (90, 6):
-        raise ValueError(f"lookback must have shape (90, 6), got {lookback.shape}")
+        msg = f"lookback must have shape (90, 6), got {lookback.shape}"
+        raise ValueError(msg)
     if not np.isfinite(lookback).all():
-        raise ValueError("lookback contains non-finite values")
+        msg = "lookback contains non-finite values"
+        raise ValueError(msg)
 
 
 def _to_forecast_response(facility_id: int, output: np.ndarray, inference_time_ms: float) -> ForecastResponse:
@@ -73,18 +88,19 @@ def _to_forecast_response(facility_id: int, output: np.ndarray, inference_time_m
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    global backend, device_type
-    device_type = resolve_device()
-    DEVICE_INFO.set(1 if device_type == DeviceType.CUDA else 0)
+    """Initialize and warm service backend for request handling lifecycle."""
+    RUNTIME_STATE.device_type = resolve_device()
+    DEVICE_INFO.set(1 if RUNTIME_STATE.device_type == DeviceType.CUDA else 0)
 
     try:
-        backend = get_backend("demand_forecaster", device_type)
+        _ = import_module("forecaster.backends")
+        RUNTIME_STATE.backend = get_backend("demand_forecaster", RUNTIME_STATE.device_type)
         model_path = os.environ.get("MODEL_PATH", "").strip()
-        if model_path and hasattr(backend, "load_model"):
-            cast(Any, backend).load_model(model_path)
+        if model_path and hasattr(RUNTIME_STATE.backend, "load_model"):
+            cast("Any", RUNTIME_STATE.backend).load_model(model_path)
             MODEL_VERSION.set(1)
     except RuntimeError:
-        backend = None
+        RUNTIME_STATE.backend = None
 
     yield
 
@@ -94,7 +110,8 @@ app = FastAPI(title="FuelSense Forecaster", version="0.2.0", lifespan=lifespan)
 
 @app.post("/predict", response_model=ForecastResponse)
 def predict(request: ForecastRequest) -> ForecastResponse:
-    if backend is None or not hasattr(backend, "predict"):
+    """Run single-facility forecast inference."""
+    if RUNTIME_STATE.backend is None or not hasattr(RUNTIME_STATE.backend, "predict"):
         raise HTTPException(status_code=503, detail="Forecaster backend unavailable")
 
     try:
@@ -105,7 +122,7 @@ def predict(request: ForecastRequest) -> ForecastResponse:
 
     lookback = lookback_matrix.reshape(1, 90, 6)
     start = perf_counter()
-    raw_predictions = cast(Any, backend).predict(lookback)
+    raw_predictions = cast("Any", RUNTIME_STATE.backend).predict(lookback)
     elapsed_ms = (perf_counter() - start) * 1000
     INFERENCE_LATENCY.observe(elapsed_ms)
 
@@ -115,11 +132,16 @@ def predict(request: ForecastRequest) -> ForecastResponse:
 
 @app.post("/predict/batch", response_model=BatchForecastResponse)
 def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
-    if backend is None or not hasattr(backend, "predict"):
+    """Run batch forecast inference for multiple facilities in one call."""
+    if RUNTIME_STATE.backend is None or not hasattr(RUNTIME_STATE.backend, "predict"):
         raise HTTPException(status_code=503, detail="Forecaster backend unavailable")
 
     if not request.requests:
-        return BatchForecastResponse(responses=[], total_inference_time_ms=0.0, device=device_type.value)
+        return BatchForecastResponse(
+            responses=[],
+            total_inference_time_ms=0.0,
+            device=RUNTIME_STATE.device_type.value,
+        )
 
     matrices: list[np.ndarray] = []
     for item in request.requests:
@@ -132,7 +154,7 @@ def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
 
     batch_input = np.stack(matrices, axis=0)
     start = perf_counter()
-    raw_predictions = cast(Any, backend).predict(batch_input)
+    raw_predictions = cast("Any", RUNTIME_STATE.backend).predict(batch_input)
     elapsed_ms = (perf_counter() - start) * 1000
     batch_size = len(request.requests)
     BATCH_INFERENCE_LATENCY.labels(batch_size=str(batch_size)).observe(elapsed_ms)
@@ -145,23 +167,25 @@ def predict_batch(request: BatchForecastRequest) -> BatchForecastResponse:
     return BatchForecastResponse(
         responses=responses,
         total_inference_time_ms=elapsed_ms,
-        device=device_type.value,
+        device=RUNTIME_STATE.device_type.value,
     )
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    if backend is None:
+    """Report backend availability and compute device health details."""
+    if RUNTIME_STATE.backend is None:
         return HealthResponse(
             status="degraded",
-            device={"device": device_type.value, "backend_loaded": False},
+            device={"device": RUNTIME_STATE.device_type.value, "backend_loaded": False},
         )
-    details = cast(dict[str, object], backend.health_check())
-    details.setdefault("device", device_type.value)
+    details = RUNTIME_STATE.backend.health_check()
+    details.setdefault("device", RUNTIME_STATE.device_type.value)
     details["backend_loaded"] = True
     return HealthResponse(status="ok", device=details)
 
 
 @app.get("/metrics")
 def metrics() -> Response:
+    """Expose Prometheus metrics for forecaster service."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
