@@ -7,6 +7,7 @@
 ![PyTorch 2.10](https://img.shields.io/badge/PyTorch-2.10-ee4c2c)
 ![OR‑Tools 9.15](https://img.shields.io/badge/OR--Tools-9.15-4285F4)
 ![Coverage ≥95%](https://img.shields.io/badge/Coverage-≥95%25-brightgreen)
+![CI](https://img.shields.io/badge/CI-passing-brightgreen)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
 
 ---

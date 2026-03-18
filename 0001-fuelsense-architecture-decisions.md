@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-03-13
-**Authors:** FuelSense Engineering
+**Authors:** Mehdi Skouri
 
 ---
 
