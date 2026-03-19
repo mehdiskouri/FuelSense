@@ -8,7 +8,9 @@
 ![OR‑Tools 9.15](https://img.shields.io/badge/OR--Tools-9.15-4285F4)
 ![Coverage ≥95%](https://img.shields.io/badge/Coverage-≥95%25-brightgreen)
 ![CI](https://img.shields.io/badge/CI-passing-brightgreen)
+![Design Decisions](#design-decisions)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
+
 
 ---
 
@@ -365,7 +367,13 @@ All endpoints require token authentication (`POST /api/v1/auth/token/`) except h
 | **Dashboard** | `GET /api/v1/dashboard/kpis/`, `GET .../drift-heatmap/` | Cached KPI aggregations (5 min TTL), per-model drift heatmap |
 
 ---
+## Design Decisions
 
+See the architectural decision record: 
+[`0001-fuelsense-architecture-decisions.md`]
+(0001-fuelsense-architecture-decisions.md).
+
+---
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
